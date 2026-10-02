@@ -192,12 +192,21 @@ curl -X PATCH http://localhost:8000/api/calls/42 -H 'Content-Type: application/j
 
 ---
 
-## 6b. AI call summaries (OpenAI)
+## 6b. AI call summaries (Azure OpenAI)
 
-Set `OPENAI_API_KEY` in `backend/.env` (optionally `OPENAI_MODEL`, default `gpt-4o-mini`) and restart the backend.
+Set in `backend/.env` and restart the backend:
+
+```ini
+AZURE_API_KEY=<key from Azure AI Foundry>
+Azure_open_ai_endpoint=https://<resource>.services.ai.azure.com/api/projects/<project>
+AZURE_OPENAI_DEPLOYMENT=gpt-4.1-mini        # deployment name in Azure AI Foundry
+AZURE_OPENAI_API_VERSION=2024-10-21
+```
+
+A project endpoint is accepted (the `/api/projects/...` part is stripped to the resource URL).
 An **AI summary** button then appears next to *Save outcome* (call wrap-up panel and Call Details).
-It sends the call metadata, the agent's notes and the transcript (if any) to OpenAI - never audio, never the key to the
-browser - saves the summary on the call and pre-selects the suggested outcome for the agent to confirm.
+It sends the call metadata, the agent's notes and the transcript (if any) to Azure OpenAI - never audio, never the
+key to the browser - saves the summary on the call and pre-selects the suggested outcome for the agent to confirm.
 
 API: `GET /api/ai/status`, `POST /api/calls/{id}/ai-summary` (`{"notes": "..."}` optional).
 
@@ -214,7 +223,7 @@ API: `GET /api/ai/status`, `POST /api/calls/{id}/ai-summary` (`{"notes": "..."}`
 | `CORS_ORIGINS` | `http://localhost:5173,…` | Allowed browser origins |
 | `LOG_LEVEL` | `INFO` | Python logging level |
 | `AUTO_SEED` | `true` | Seed demo data into an empty database |
-| `OPENAI_API_KEY` / `OPENAI_MODEL` / `OPENAI_BASE_URL` | empty / `gpt-4o-mini` / OpenAI | Optional AI call summaries |
+| `AZURE_API_KEY` / `Azure_open_ai_endpoint` / `AZURE_OPENAI_DEPLOYMENT` / `AZURE_OPENAI_API_VERSION` | empty / empty / `gpt-4.1-mini` / `2024-10-21` | Optional AI call summaries (Azure OpenAI) |
 
 No SIP or VPN credentials belong in the backend.
 

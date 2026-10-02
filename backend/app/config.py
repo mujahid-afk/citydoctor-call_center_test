@@ -34,6 +34,26 @@ def _resolve_database_url(url: str) -> str:
     return url
 
 
+def _first_env(*names: str) -> str:
+    for name in names:
+        value = _env(name)
+        if value:
+            return value
+    return ""
+
+
+def _azure_resource_url(url: str) -> str:
+    """Accept a resource or a Foundry *project* endpoint and return the resource base URL.
+
+    https://x.services.ai.azure.com/api/projects/p -> https://x.services.ai.azure.com
+    """
+    url = url.strip().rstrip("/")
+    for marker in ("/api/projects", "/openai"):
+        if marker in url:
+            url = url.split(marker, 1)[0]
+    return url
+
+
 @dataclass(frozen=True)
 class Settings:
     app_env: str
@@ -43,9 +63,10 @@ class Settings:
     frontend_url: str
     log_level: str
     auto_seed: bool
-    openai_api_key: str
-    openai_model: str
-    openai_base_url: str
+    azure_api_key: str
+    azure_endpoint: str
+    azure_deployment: str
+    azure_api_version: str
     cors_origins: list[str] = field(default_factory=list)
 
 
@@ -63,8 +84,12 @@ def get_settings() -> Settings:
         frontend_url=frontend_url,
         log_level=_env("LOG_LEVEL", "INFO").upper(),
         auto_seed=_env_bool("AUTO_SEED", True),
-        openai_api_key=_env("OPENAI_API_KEY"),
-        openai_model=_env("OPENAI_MODEL", "gpt-4o-mini"),
-        openai_base_url=_env("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
+        azure_api_key=_first_env("AZURE_OPENAI_API_KEY", "AZURE_API_KEY"),
+        azure_endpoint=_azure_resource_url(
+            _first_env("AZURE_OPENAI_ENDPOINT", "Azure_open_ai_endpoint", "AZURE_OPEN_AI_ENDPOINT",
+                       "Azure_project_endpoint", "AZURE_PROJECT_ENDPOINT")
+        ),
+        azure_deployment=_first_env("AZURE_OPENAI_DEPLOYMENT", "AZURE_OPENAI_MODEL") or "gpt-4.1-mini",
+        azure_api_version=_env("AZURE_OPENAI_API_VERSION", "2024-10-21"),
         cors_origins=origins,
     )

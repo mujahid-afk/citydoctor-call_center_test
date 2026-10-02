@@ -75,14 +75,14 @@ def set_outcome(call_id: int, payload: CallOutcomeIn, db: DbSession):
 
 @router.get("/ai/status", response_model=AIStatus)
 def ai_status():
-    """Whether AI summaries are available (OPENAI_API_KEY set). Never returns the key."""
+    """Whether AI summaries are available (Azure OpenAI configured). Never returns the key."""
     enabled = ai_service.ai_enabled()
-    return AIStatus(enabled=enabled, model=get_settings().openai_model if enabled else None)
+    return AIStatus(enabled=enabled, model=get_settings().azure_deployment if enabled else None)
 
 
 @router.post("/calls/{call_id}/ai-summary", response_model=AISummaryOut)
 def ai_summary(call_id: int, payload: AISummaryIn, db: DbSession):
-    """Summarize the call with OpenAI, save the summary on the call and suggest an outcome."""
+    """Summarize the call with Azure OpenAI, save the summary on the call and suggest an outcome."""
     call = call_service.get_call_or_404(db, call_id)
     result = ai_service.summarize_call(call, payload.notes)
     if result["summary"]:

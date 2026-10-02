@@ -1,4 +1,4 @@
-"""AI call summaries via the OpenAI Chat Completions API (server-side only).
+"""AI call summaries via Azure OpenAI (Azure AI Foundry), server-side only.
 
 The API key never leaves the backend. Only CRM call metadata, agent notes and
 the transcript (if any) are sent - no audio.
@@ -30,7 +30,8 @@ SYSTEM_PROMPT = (
 
 
 def ai_enabled() -> bool:
-    return bool(get_settings().openai_api_key)
+    settings = get_settings()
+    return bool(settings.azure_api_key and settings.azure_endpoint)
 
 
 def _call_context(call: Call, notes: str | None) -> str:
@@ -50,48 +51,68 @@ def _call_context(call: Call, notes: str | None) -> str:
     return "\n".join(lines)
 
 
-def summarize_call(call: Call, notes: str | None = None) -> dict:
-    """Return {"summary", "suggested_outcome", "next_action"}; raises HTTPException on failure."""
-    settings = get_settings()
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=503, detail="AI is not configured: set OPENAI_API_KEY in backend/.env and restart.")
-
-    body = {
-        "model": settings.openai_model,
-        "temperature": 0.2,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _call_context(call, notes)},
-        ],
-    }
+def _error_message(response: httpx.Response) -> str:
     try:
-        response = httpx.post(
-            f"{settings.openai_base_url}/chat/completions",
-            json=body,
-            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-            timeout=45,
-        )
+        error = response.json().get("error", {})
+        return error.get("message") or error.get("code") or response.text[:200]
+    except ValueError:
+        return response.text[:200]
+
+
+def _chat(body: dict) -> dict:
+    """POST to the Azure deployment endpoint; fall back to the v1 endpoint if the deployment route 404s."""
+    settings = get_settings()
+    headers = {"api-key": settings.azure_api_key}
+    deployment_url = (
+        f"{settings.azure_endpoint}/openai/deployments/{settings.azure_deployment}"
+        f"/chat/completions?api-version={settings.azure_api_version}"
+    )
+    try:
+        response = httpx.post(deployment_url, json=body, headers=headers, timeout=45)
+        if response.status_code == 404:
+            response = httpx.post(
+                f"{settings.azure_endpoint}/openai/v1/chat/completions",
+                json={**body, "model": settings.azure_deployment},
+                headers=headers,
+                timeout=45,
+            )
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"Could not reach OpenAI: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"Could not reach Azure OpenAI: {exc}") from exc
 
     if response.status_code >= 400:
-        try:
-            message = response.json().get("error", {}).get("message", "")
-        except ValueError:
-            message = response.text[:200]
-        logger.warning("OpenAI error %s: %s", response.status_code, message)
-        raise HTTPException(status_code=502, detail=f"OpenAI error {response.status_code}: {message}")
+        message = _error_message(response)
+        logger.warning("Azure OpenAI error %s: %s", response.status_code, message)
+        hint = " (check AZURE_OPENAI_DEPLOYMENT matches the deployment name in Azure AI Foundry)" if response.status_code == 404 else ""
+        raise HTTPException(status_code=502, detail=f"Azure OpenAI error {response.status_code}: {message}{hint}")
+    return response.json()
 
+
+def summarize_call(call: Call, notes: str | None = None) -> dict:
+    """Return {"summary", "suggested_outcome", "next_action"}; raises HTTPException on failure."""
+    if not ai_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="AI is not configured: set AZURE_API_KEY and Azure_open_ai_endpoint in backend/.env and restart.",
+        )
+
+    data = _chat(
+        {
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": _call_context(call, notes)},
+            ],
+        }
+    )
     try:
-        content = response.json()["choices"][0]["message"]["content"]
-        data = json.loads(content)
+        parsed = json.loads(data["choices"][0]["message"]["content"])
     except (KeyError, IndexError, ValueError, TypeError) as exc:
-        raise HTTPException(status_code=502, detail="OpenAI returned an unexpected response.") from exc
+        raise HTTPException(status_code=502, detail="Azure OpenAI returned an unexpected response.") from exc
 
-    outcome = str(data.get("suggested_outcome") or "").strip().lower().replace(" ", "_")
+    outcome = str(parsed.get("suggested_outcome") or "").strip().lower().replace(" ", "_")
     return {
-        "summary": str(data.get("summary") or "").strip(),
+        "summary": str(parsed.get("summary") or "").strip(),
         "suggested_outcome": outcome if outcome in OUTCOMES else None,
-        "next_action": str(data.get("next_action") or "").strip(),
+        "next_action": str(parsed.get("next_action") or "").strip(),
     }
