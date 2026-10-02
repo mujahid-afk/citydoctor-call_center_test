@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..database import get_db
 from ..models import Booking, Call, Customer
-from ..schemas import BookingConfirmation, BookingCreate, BookingOut, BookingUpdate
+from ..schemas import BookingCreate, BookingOut, BookingUpdate
 from ..services import booking_service
 
 router = APIRouter(prefix="/api", tags=["bookings"])
@@ -45,8 +45,9 @@ def list_bookings(
     return list(db.scalars(query))
 
 
-@router.post("/bookings", response_model=BookingConfirmation, status_code=status.HTTP_201_CREATED)
+@router.post("/bookings", response_model=BookingOut, status_code=status.HTTP_201_CREATED)
 def create_booking(payload: BookingCreate, db: DbSession):
+    """Create a (dummy) booking. Linking ``call_id`` marks that call's outcome as booked."""
     customer = db.get(Customer, payload.customer_id)
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
@@ -55,7 +56,7 @@ def create_booking(payload: BookingCreate, db: DbSession):
         call = db.get(Call, payload.call_id)
         if not call:
             raise HTTPException(status_code=404, detail="Call not found")
-    booking = booking_service.create_booking(
+    return booking_service.create_booking(
         db,
         customer=customer,
         service=payload.service,
@@ -63,10 +64,6 @@ def create_booking(payload: BookingCreate, db: DbSession):
         appointment_time=payload.appointment_time,
         notes=payload.notes,
         call=call,
-    )
-    return BookingConfirmation(
-        message=f"Booking {booking.reference} confirmed for {booking.appointment_date} at {booking.appointment_time}",
-        booking=BookingOut.model_validate(booking),
     )
 
 
