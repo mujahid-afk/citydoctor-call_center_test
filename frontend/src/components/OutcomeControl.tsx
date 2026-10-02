@@ -122,7 +122,7 @@ export function OutcomeControl({
         </div>
       )}
       {error && <ErrorBanner message={error} />}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <button type="button" className={btnPrimary} disabled={!callId || !outcome || saving} onClick={() => void save()}>
           {saving ? <Spinner /> : saved ? <Check className="h-4 w-4" /> : null}
           {saved ? "Outcome saved" : "Save outcome"}
