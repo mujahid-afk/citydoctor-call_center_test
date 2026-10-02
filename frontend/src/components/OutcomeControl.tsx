@@ -4,11 +4,13 @@ import { CALL_OUTCOMES, api, type Call, type CallOutcome } from "../api";
 import { humanize } from "../lib/format";
 import { ErrorBanner, Spinner, btnPrimary, btnSecondary, inputClass, labelClass } from "./ui";
 
-// Fetched once per page load: is OPENAI_API_KEY configured on the backend?
-let aiStatusPromise: Promise<boolean> | null = null;
+// Is Azure OpenAI configured on the backend? (re-checked at most every 30 s)
+let aiStatusCache: { at: number; value: Promise<boolean> } | null = null;
 function aiAvailable(): Promise<boolean> {
-  aiStatusPromise ??= api.aiStatus().then((s) => s.enabled).catch(() => false);
-  return aiStatusPromise;
+  if (!aiStatusCache || Date.now() - aiStatusCache.at > 30_000) {
+    aiStatusCache = { at: Date.now(), value: api.aiStatus().then((s) => s.enabled).catch(() => false) };
+  }
+  return aiStatusCache.value;
 }
 
 /** Pick + save a call outcome (POST /api/calls/{id}/outcome). */
@@ -47,7 +49,7 @@ export function OutcomeControl({
 
   useEffect(() => {
     void aiAvailable().then(setAiEnabled);
-  }, []);
+  }, [callId]);
 
   const summarize = async () => {
     if (!callId) return;
@@ -125,13 +127,23 @@ export function OutcomeControl({
           {saving ? <Spinner /> : saved ? <Check className="h-4 w-4" /> : null}
           {saved ? "Outcome saved" : "Save outcome"}
         </button>
-        {aiEnabled && (
-          <button type="button" className={btnSecondary} disabled={!callId || aiBusy} onClick={() => void summarize()}>
-            {aiBusy ? <Spinner /> : <Sparkles className="h-4 w-4 text-violet-600" />} AI summary
-          </button>
-        )}
+        <button
+          type="button"
+          className={btnSecondary}
+          disabled={!callId || aiBusy || !aiEnabled}
+          onClick={() => void summarize()}
+          title={aiEnabled ? "Summarize this call with Azure OpenAI" : "AI not configured on the backend"}
+        >
+          {aiBusy ? <Spinner /> : <Sparkles className="h-4 w-4 text-violet-600" />} AI summary
+        </button>
       </div>
       {!callId && <p className="text-xs text-slate-400">Waiting for the call record…</p>}
+      {!aiEnabled && (
+        <p className="text-xs text-slate-400">
+          AI summary is off: set <code>AZURE_API_KEY</code> and <code>Azure_open_ai_endpoint</code> in backend/.env and
+          restart the backend (check http://localhost:8000/api/ai/status).
+        </p>
+      )}
     </div>
   );
 }

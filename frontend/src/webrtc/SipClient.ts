@@ -513,7 +513,8 @@ export class RealSipClient extends BaseSipClient {
     let calledNumber: string | undefined;
     for (const header of CALLED_NUMBER_HEADERS) {
       const value = userFromHeader(request.getHeader(header));
-      if (value && value !== this.config.username) {
+      // Only phone-number-like values: the To header often carries our random WebRTC contact name.
+      if (value && value !== this.config.username && /^\+?\d{3,15}$/.test(value)) {
         calledNumber = value;
         break;
       }
