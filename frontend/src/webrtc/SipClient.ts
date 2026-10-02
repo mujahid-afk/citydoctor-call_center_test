@@ -316,6 +316,10 @@ export class RealSipClient extends BaseSipClient {
   private session: Session | null = null;
   /** Set when we know why the session ended before SIP.js reports Terminated. */
   private pendingEnd: { reason: CallEndReason; error?: string; statusCode?: number } | null = null;
+  /** True once the PBX sent 200 OK for our INVITE (used to diagnose media setup failures). */
+  private remoteAccepted = false;
+  /** Last SIP.js warning/error, appended to otherwise-unexplained failures. */
+  private lastSipLog: string | null = null;
 
   constructor(
     private config: SipConfig,
@@ -356,6 +360,7 @@ export class RealSipClient extends BaseSipClient {
       // Never print credentials / auth headers.
       logConnector: (level, category, _label, content) => {
         const line = `[sip.js ${category}] ${redact(content)}`;
+        this.lastSipLog = redact(content).split("\n")[0].slice(0, 300);
         if (level === "error") console.error(line);
         else console.warn(line);
       },
@@ -474,8 +479,12 @@ export class RealSipClient extends BaseSipClient {
               if (call) this.events.onCallRinging?.(call);
             }
           },
+          onAccept: () => {
+            this.remoteAccepted = true;
+          },
           onReject: (response: IncomingResponse) => {
             const statusCode = response.message.statusCode ?? 0;
+            console.warn(`[softphone] INVITE rejected: ${statusCode} ${response.message.reasonPhrase}`);
             const { endReason, message } = describeSipStatus(statusCode, response.message.reasonPhrase);
             this.pendingEnd = { reason: endReason, error: message, statusCode };
           },
@@ -668,6 +677,8 @@ export class RealSipClient extends BaseSipClient {
   private bindSession(session: Session): void {
     this.session = session;
     this.pendingEnd = null;
+    this.remoteAccepted = false;
+    this.lastSipLog = null;
     session.stateChange.addListener((state) => {
       if (this.session !== session) return;
       if (state === SessionState.Established) this.onEstablished(session);
@@ -705,7 +716,18 @@ export class RealSipClient extends BaseSipClient {
     this.session = null;
     if (pending) this.finish(pending.reason, pending);
     else if (call.answeredAt) this.finish("completed");
-    else this.finish(call.direction === "inbound" ? "missed" : "failed", { error: "Call ended before it was answered" });
+    else if (this.remoteAccepted) {
+      // 200 OK arrived but the WebRTC session could not be set up (SDP/DTLS/ICE).
+      this.finish("failed", {
+        error:
+          "PBX answered but WebRTC media setup failed. On the extension enable: Media Encryption = DTLS-SRTP, " +
+          "Enable DTLS = Yes, AVPF = Yes, ICE = Yes, rtcp-mux = Yes, codec Opus/ulaw." +
+          (this.lastSipLog ? ` Details: ${this.lastSipLog}` : ""),
+      });
+    } else {
+      const detail = this.lastSipLog ? ` Details: ${this.lastSipLog}` : " See the browser console ([sip.js] lines).";
+      this.finish(call.direction === "inbound" ? "missed" : "failed", { error: `Call ended before it was answered.${detail}` });
+    }
   }
 
   private terminateCurrent(reason: CallEndReason, error: string): void {
