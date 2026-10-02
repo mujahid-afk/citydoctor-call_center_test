@@ -26,6 +26,7 @@ export function ActiveCallPanel({
   onOpenCall,
   onBook,
   onOutcomeSaved,
+  onSummarized,
 }: {
   brands: Brand[];
   crmIds: Record<string, number>;
@@ -35,6 +36,7 @@ export function ActiveCallPanel({
   onOpenCall: (id: number) => void;
   onBook: (callId: number | null, phone: string) => void;
   onOutcomeSaved: (call: Call) => void;
+  onSummarized?: (call: Call) => void;
 }) {
   const sip = useSip();
   const live = sip.call;
@@ -87,7 +89,7 @@ export function ActiveCallPanel({
 
       {ended && (
         <div className="space-y-3 border-b border-slate-100 px-5 py-4">
-          <OutcomeControl callId={crmId} initialOutcome={null} initialNotes={null} onSaved={onOutcomeSaved} />
+          <OutcomeControl callId={crmId} initialOutcome={null} initialNotes={null} onSaved={onOutcomeSaved} onSummarized={onSummarized} />
           <button type="button" className={btnSecondary} onClick={() => onBook(crmId, shown.remoteNumber)}>
             <CalendarPlus className="h-4 w-4" /> Book appointment
           </button>

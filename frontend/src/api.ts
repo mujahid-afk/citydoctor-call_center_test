@@ -133,6 +133,13 @@ export interface RandomCaller {
   brand_number: string | null;
 }
 
+export interface AISummary {
+  summary: string;
+  suggested_outcome: CallOutcome | null;
+  next_action: string;
+  call: Call;
+}
+
 export class ApiError extends Error {
   constructor(message: string, public status: number) {
     super(message);
@@ -212,6 +219,10 @@ export const api = {
     request<Booking>("/api/bookings", json("POST", input)),
   updateBooking: (id: number, patch: Partial<Pick<Booking, "status" | "appointment_date" | "appointment_time" | "notes" | "service">>) =>
     request<Booking>(`/api/bookings/${id}`, json("PUT", patch)),
+
+  aiStatus: () => request<{ enabled: boolean; model: string | null }>("/api/ai/status"),
+  aiSummary: (id: number, notes?: string | null) =>
+    request<AISummary>(`/api/calls/${id}/ai-summary`, json("POST", { notes: notes ?? null })),
 
   randomCaller: () => request<RandomCaller>("/api/testing/random-caller"),
 };

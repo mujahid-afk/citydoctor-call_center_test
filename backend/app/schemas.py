@@ -213,3 +213,21 @@ class CustomerLookup(BaseModel):
     customer: CustomerOut
     recent_calls: list[CallOut]
     bookings: list[BookingOut]
+
+
+# ---------------------------------------------------------------- AI
+class AISummaryIn(BaseModel):
+    # Unsaved notes from the UI; falls back to the call's saved notes.
+    notes: str | None = None
+
+
+class AISummaryOut(BaseModel):
+    summary: str
+    suggested_outcome: Outcome | None
+    next_action: str
+    call: CallOut
+
+
+class AIStatus(BaseModel):
+    enabled: bool
+    model: str | None

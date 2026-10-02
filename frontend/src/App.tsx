@@ -219,6 +219,10 @@ function Dashboard({ handlerRef }: { handlerRef: MutableRefObject<Handler | null
               }}
               onOpenCall={setDetailsId}
               onBook={(callId, phone) => void openBookingForPhone(callId, phone)}
+              onSummarized={(c) => {
+                toast("success", `AI summary saved for call #${c.id}`);
+                changed();
+              }}
               onOutcomeSaved={(c) => {
                 toast("success", `Outcome saved for call #${c.id}`);
                 changed();

@@ -43,6 +43,9 @@ class Settings:
     frontend_url: str
     log_level: str
     auto_seed: bool
+    openai_api_key: str
+    openai_model: str
+    openai_base_url: str
     cors_origins: list[str] = field(default_factory=list)
 
 
@@ -60,5 +63,8 @@ def get_settings() -> Settings:
         frontend_url=frontend_url,
         log_level=_env("LOG_LEVEL", "INFO").upper(),
         auto_seed=_env_bool("AUTO_SEED", True),
+        openai_api_key=_env("OPENAI_API_KEY"),
+        openai_model=_env("OPENAI_MODEL", "gpt-4o-mini"),
+        openai_base_url=_env("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
         cors_origins=origins,
     )

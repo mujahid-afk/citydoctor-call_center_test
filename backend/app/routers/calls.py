@@ -8,9 +8,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..database import get_db
-from ..schemas import CallCreate, CallOut, CallOutcomeIn, CallUpdate, Stats
-from ..services import call_service
+from ..schemas import AISummaryIn, AISummaryOut, AIStatus, CallCreate, CallOut, CallOutcomeIn, CallUpdate, Stats
+from ..services import ai_service, call_service
 
 router = APIRouter(prefix="/api", tags=["calls"])
 
@@ -70,3 +71,20 @@ def update_call(call_id: int, payload: CallUpdate, db: DbSession):
 def set_outcome(call_id: int, payload: CallOutcomeIn, db: DbSession):
     update = CallUpdate(outcome=payload.outcome, **({"notes": payload.notes} if payload.notes is not None else {}))
     return call_service.update_call(db, call_service.get_call_or_404(db, call_id), update)
+
+
+@router.get("/ai/status", response_model=AIStatus)
+def ai_status():
+    """Whether AI summaries are available (OPENAI_API_KEY set). Never returns the key."""
+    enabled = ai_service.ai_enabled()
+    return AIStatus(enabled=enabled, model=get_settings().openai_model if enabled else None)
+
+
+@router.post("/calls/{call_id}/ai-summary", response_model=AISummaryOut)
+def ai_summary(call_id: int, payload: AISummaryIn, db: DbSession):
+    """Summarize the call with OpenAI, save the summary on the call and suggest an outcome."""
+    call = call_service.get_call_or_404(db, call_id)
+    result = ai_service.summarize_call(call, payload.notes)
+    if result["summary"]:
+        call = call_service.update_call(db, call, CallUpdate(summary=result["summary"]))
+    return AISummaryOut(**result, call=call)

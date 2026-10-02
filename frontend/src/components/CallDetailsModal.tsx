@@ -145,6 +145,10 @@ export function CallDetailsModal({
                   setCall(updated);
                   onChanged();
                 }}
+                onSummarized={(updated) => {
+                  setCall(updated);
+                  onChanged();
+                }}
               />
             </div>
           </div>
