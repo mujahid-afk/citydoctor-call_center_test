@@ -507,7 +507,9 @@ export class RealSipClient extends BaseSipClient {
     let calledNumber: string | undefined;
     for (const header of CALLED_NUMBER_HEADERS) {
       const value = userFromHeader(request.getHeader(header));
-      if (value && value !== this.config.username) {
+      // Only accept real phone numbers: the To header of a call to a WebRTC
+      // contact carries SIP.js's random contact id (e.g. "gpuu8fqs").
+      if (value && value !== this.config.username && /^\+?\d{4,}$/.test(value)) {
         calledNumber = value;
         break;
       }
