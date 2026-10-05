@@ -35,6 +35,8 @@ export interface SipCall {
   remoteDisplayName?: string;
   /** Inbound only: the DID that was called, if the PBX passes it (used to match the brand). */
   calledNumber?: string;
+  /** Outbound only: the PBX sent early media (183), so it plays its own ringback. */
+  earlyMedia?: boolean;
   /** SIP Call-ID header. */
   sipCallId?: string;
   state: CallState;

@@ -469,6 +469,8 @@ export class RealSipClient extends BaseSipClient {
         requestDelegate: {
           onProgress: (response: IncomingResponse) => {
             const code = response.message.statusCode;
+            // 183 Session Progress carries the PBX's own ringback audio: stop the local tone.
+            if (code === 183 && this.current && !this.current.earlyMedia) this.emitUpdated({ earlyMedia: true });
             if ((code === 180 || code === 183) && this.current?.state !== "ringing" && this.current?.state !== "answered") {
               const call = this.update({ state: "ringing" });
               if (call) this.events.onCallRinging?.(call);

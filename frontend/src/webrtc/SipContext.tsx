@@ -6,6 +6,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getSipConfig, normalizeDialNumber, publicSipSummary } from "./config";
 import { MockSipClient, RealSipClient, createSipClient } from "./SipClient";
+import { startTone, stopTone, unlockTones } from "./tones";
 import type { RegistrationState, SipCall, SipClient, SipConfig, SipMode } from "./types";
 
 export type SipCallEventType = "incoming" | "started" | "ringing" | "answered" | "updated" | "ended" | "failed";
@@ -136,6 +137,49 @@ export function SipProvider({
       clientRef.current = null;
     };
   }, [emit]);
+
+  // Call tones: local ringback for outbound ringing (unless the PBX sends early
+  // media), ringtone for incoming calls.
+  const tone =
+    call?.direction === "outbound" && (call.state === "calling" || call.state === "ringing") && !call.earlyMedia
+      ? "ringback"
+      : call?.direction === "inbound" && call.state === "incoming"
+        ? "ringtone"
+        : null;
+  useEffect(() => {
+    if (tone) startTone(tone);
+    else stopTone();
+  }, [tone]);
+  useEffect(() => stopTone, []);
+
+  // Browser notification for an incoming call while the CRM tab is in the background.
+  const incomingId = call?.direction === "inbound" && call.state === "incoming" ? call.id : null;
+  useEffect(() => {
+    if (!incomingId || !call || document.visibilityState === "visible") return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    const notification = new Notification("Incoming call", {
+      body: call.remoteDisplayName ? `${call.remoteDisplayName} (${call.remoteNumber})` : call.remoteNumber,
+      tag: incomingId,
+      requireInteraction: true,
+    });
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+    return () => notification.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomingId]);
+
+  // Browsers only allow audio and permission prompts after a user gesture:
+  // unlock tones and ask for notification permission on the first click.
+  useEffect(() => {
+    const onFirstGesture = () => {
+      unlockTones();
+      if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission();
+    };
+    document.addEventListener("pointerdown", onFirstGesture, { once: true });
+    return () => document.removeEventListener("pointerdown", onFirstGesture);
+  }, []);
 
   const run = useCallback(async (action: (client: SipClient) => Promise<void> | void) => {
     const client = clientRef.current;
