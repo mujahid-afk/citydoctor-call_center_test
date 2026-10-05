@@ -469,8 +469,9 @@ export class RealSipClient extends BaseSipClient {
         requestDelegate: {
           onProgress: (response: IncomingResponse) => {
             const code = response.message.statusCode;
-            // 183 Session Progress carries the PBX's own ringback audio: stop the local tone.
-            if (code === 183 && this.current && !this.current.earlyMedia) this.emitUpdated({ earlyMedia: true });
+            // 183 may carry the PBX's own ringback (early media). Play it, and only
+            // silence the local tone once real audio is actually heard.
+            if (code === 183) this.startEarlyMedia(inviter);
             if ((code === 180 || code === 183) && this.current?.state !== "ringing" && this.current?.state !== "answered") {
               const call = this.update({ state: "ringing" });
               if (call) this.events.onCallRinging?.(call);
@@ -666,6 +667,51 @@ export class RealSipClient extends BaseSipClient {
     await this.remoteAudio?.play();
   }
 
+  // ------------------------------------------------------------------ early media
+  private earlyMediaMonitor: { stop(): void } | null = null;
+
+  private startEarlyMedia(session: Session): void {
+    if (this.earlyMediaMonitor) return;
+    const sdh = session.sessionDescriptionHandler as Web.SessionDescriptionHandler | undefined;
+    const stream = sdh?.remoteMediaStream;
+    if (!stream || stream.getAudioTracks().length === 0) return;
+    if (this.remoteAudio) {
+      this.remoteAudio.srcObject = stream;
+      this.remoteAudio.play().catch(() => undefined);
+    }
+    if (!("AudioContext" in window)) return;
+    const ctx = new AudioContext();
+    void ctx.resume().catch(() => undefined);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+    let loudTicks = 0;
+    const timer = window.setInterval(() => {
+      analyser.getByteTimeDomainData(samples);
+      let peak = 0;
+      for (const v of samples) peak = Math.max(peak, Math.abs(v - 128));
+      loudTicks = peak > 4 ? loudTicks + 1 : 0;
+      // ~300 ms of sustained audio from the PBX: it plays its own ringback.
+      if (loudTicks >= 3 && this.session === session && this.current && !this.current.earlyMedia) {
+        console.info("[softphone] PBX early media detected; local ringback off");
+        this.emitUpdated({ earlyMedia: true });
+        this.stopEarlyMedia();
+      }
+    }, 100);
+    this.earlyMediaMonitor = {
+      stop: () => {
+        window.clearInterval(timer);
+        void ctx.close().catch(() => undefined);
+      },
+    };
+  }
+
+  private stopEarlyMedia(): void {
+    this.earlyMediaMonitor?.stop();
+    this.earlyMediaMonitor = null;
+  }
+
   // ------------------------------------------------------------------ session plumbing
   private bindSession(session: Session): void {
     this.session = session;
@@ -679,6 +725,7 @@ export class RealSipClient extends BaseSipClient {
 
   private onEstablished(session: Session): void {
     this.clearTimers();
+    this.stopEarlyMedia();
     const call = this.update({ state: "answered", answeredAt: Date.now() });
     const sdh = session.sessionDescriptionHandler as Web.SessionDescriptionHandler | undefined;
     if (sdh && this.remoteAudio) {
@@ -700,6 +747,7 @@ export class RealSipClient extends BaseSipClient {
   }
 
   private onTerminated(): void {
+    this.stopEarlyMedia();
     const call = this.current;
     if (!call) return;
     const pending = this.pendingEnd;
@@ -711,6 +759,7 @@ export class RealSipClient extends BaseSipClient {
   }
 
   private terminateCurrent(reason: CallEndReason, error: string): void {
+    this.stopEarlyMedia();
     this.session = null;
     this.pendingEnd = null;
     this.finish(reason, { error });

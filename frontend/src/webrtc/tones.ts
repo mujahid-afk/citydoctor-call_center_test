@@ -86,6 +86,7 @@ export function startTone(kind: ToneKind): void {
     if (nodes.length > 200) nodes.splice(0, nodes.length - 100);
   };
   tick();
+  console.info(`[softphone] ${kind} tone on (audio ${ac.state})`);
   active = { kind, timer: window.setInterval(tick, 500), nodes };
 }
 
