@@ -691,9 +691,9 @@ export class RealSipClient extends BaseSipClient {
       analyser.getByteTimeDomainData(samples);
       let peak = 0;
       for (const v of samples) peak = Math.max(peak, Math.abs(v - 128));
-      loudTicks = peak > 4 ? loudTicks + 1 : 0;
-      // ~300 ms of sustained audio from the PBX: it plays its own ringback.
-      if (loudTicks >= 3 && this.session === session && this.current && !this.current.earlyMedia) {
+      loudTicks = peak > 16 ? loudTicks + 1 : 0;
+      // ~600 ms of clearly audible audio from the PBX: it plays its own ringback.
+      if (loudTicks >= 6 && this.session === session && this.current && !this.current.earlyMedia) {
         console.info("[softphone] PBX early media detected; local ringback off");
         this.emitUpdated({ earlyMedia: true });
         this.stopEarlyMedia();
