@@ -64,7 +64,7 @@ Open **http://localhost:5173**. The API docs are at http://localhost:8000/docs.
 * SQLite file: `backend/voice_crm.db`. It is created automatically on first start. Relative `DATABASE_URL` paths resolve against `backend/`.
 * **Initialize:** starting the backend creates the tables. Alternatively run `python -m app.seed`.
 * **Seed:** demo data is inserted automatically when the database is empty (`AUTO_SEED=true`): 6 brands, 7 demo queues, 10 customers, 10 inbound calls, 10 outbound calls and 5 bookings.
-* **Reset and re-seed:** run `python -m app.seed --reset` (from `backend/`), or `POST /api/testing/reset`.
+* **Reset and re-seed:** run `python -m app.seed --reset` (from `backend/`), or `POST /api/testing/reset`. The API reset is refused (409) once the database holds real, non-mock calls, so only the command line can wipe real data.
 * There is no migration tool in this MVP. On start-up, new nullable columns are added to existing tables automatically (logged as `Added column ...`), so an existing `voice_crm.db` keeps its data. For anything bigger, delete `voice_crm.db` and restart.
 * An existing database gets no demo queues. Run `python -m app.seed --reset` if you want them for mock demos. Real queues are created from the first call that carries `X-Queue`.
 
@@ -321,7 +321,7 @@ No SIP or VPN credentials belong in the backend.
 | POST | `/api/customers` | |
 | PATCH | `/api/customers/{id}` | |
 | GET | `/api/calls` | Filters: `direction`, `status`, `outcome`, `brand_id`, `queue_id`, `search`, `date_from`, `date_to`, `limit` |
-| POST | `/api/calls` | Softphone logs a call (`ringing` inbound / `calling` outbound). Inbound also sends `brand_name`, `queue_name`, `ivr_path` and `queue_entered_at` from the INVITE headers. |
+| POST | `/api/calls` | Softphone logs a call (`ringing` inbound / `calling` outbound). Inbound also sends `brand_name`, `queue_name`, `ivr_path` and `queue_entered_at` from the INVITE headers. A withheld caller ID is stored as `anonymous`; a display name without letters (the trunk often sends the number) is ignored. |
 | GET | `/api/calls/{id}` | |
 | PATCH | `/api/calls/{id}` | Status updates and ElevenLabs fields. `answered_at`, `ended_at` and duration are filled automatically. |
 | POST | `/api/calls/{id}/outcome` | `{ "outcome": "booked", "notes": "..." }` |
@@ -332,7 +332,7 @@ No SIP or VPN credentials belong in the backend.
 | PUT | `/api/bookings/{id}` | |
 | DELETE | `/api/bookings/{id}` | |
 | GET | `/api/testing/random-caller` | Used by Simulate Incoming Call |
-| POST | `/api/testing/reset` | Drops and re-seeds demo data |
+| POST | `/api/testing/reset` | Drops and re-seeds demo data. 409 if real (non-mock) calls exist |
 
 Call statuses: `ringing`, `calling`, `answered`, `completed`, `missed`, `rejected`, `failed`, `transferred`.
 

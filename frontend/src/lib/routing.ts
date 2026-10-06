@@ -11,10 +11,21 @@ export function findQueue(queues: Queue[], name?: string | null): Queue | undefi
   return key ? queues.find((q) => labelKey(q.name) === key) : undefined;
 }
 
+/** The number without its international or trunk prefix: +97142000104 and 042000104 -> 42000104. */
+export function nationalNumber(number?: string | null, countryCode = "971"): string {
+  let digits = (number ?? "").replace(/\D/g, "");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  else if (digits.startsWith("0")) return digits.slice(1);
+  return digits.startsWith(countryCode) && digits.length > countryCode.length + 6 ? digits.slice(countryCode.length) : digits;
+}
+
+/** False for withheld caller IDs ("anonymous"), which cannot be called back. */
+export const isDialable = (phone?: string | null) => /\d/.test(phone ?? "");
+
 export function brandByNumber(brands: Brand[], number?: string | null): Brand | undefined {
-  const digits = (number ?? "").replace(/\D/g, "").slice(-9);
-  if (!digits) return undefined;
-  return brands.find((b) => b.phone_number.replace(/\D/g, "").slice(-9) === digits);
+  const did = nationalNumber(number);
+  if (!did) return undefined;
+  return brands.find((b) => nationalNumber(b.phone_number) === did);
 }
 
 /** X-Brand label > the queue's brand > called DID. */

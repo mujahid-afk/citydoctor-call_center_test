@@ -2,6 +2,7 @@ import { CalendarPlus, Phone } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api, type Call } from "../api";
 import { formatDateTime, formatDuration, humanize } from "../lib/format";
+import { isDialable } from "../lib/routing";
 import { OutcomeControl } from "./OutcomeControl";
 import { DirectionBadge, ErrorBanner, Modal, OutcomeBadge, Spinner, StatusBadge, btnSecondary } from "./ui";
 
@@ -83,9 +84,11 @@ export function CallDetailsModal({
             <button type="button" className={btnSecondary} onClick={() => onBook(call)}>
               <CalendarPlus className="h-4 w-4" /> Create booking
             </button>
-            <button type="button" className={btnSecondary} onClick={() => { onDial(call.customer_phone); onClose(); }}>
-              <Phone className="h-4 w-4" /> {call.direction === "inbound" ? "Call back" : "Redial"}
-            </button>
+            {isDialable(call.customer_phone) && (
+              <button type="button" className={btnSecondary} onClick={() => { onDial(call.customer_phone); onClose(); }}>
+                <Phone className="h-4 w-4" /> {call.direction === "inbound" ? "Call back" : "Redial"}
+              </button>
+            )}
           </>
         )
       }

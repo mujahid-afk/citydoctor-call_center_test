@@ -5,12 +5,12 @@ from __future__ import annotations
 import random
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Brand, Customer, Queue
+from ..models import Brand, Call, Customer, Queue
 from ..seed import reset_and_seed
 
 router = APIRouter(prefix="/api/testing", tags=["testing"])
@@ -48,7 +48,13 @@ def random_caller(db: DbSession):
 
 
 @router.post("/reset")
-def reset_demo_data():
-    """Drop all data and re-seed the demo dataset."""
+def reset_demo_data(db: DbSession):
+    """Drop all data and re-seed the demo dataset. Refused once real (non-mock) calls exist."""
+    if db.scalars(select(Call.id).where(Call.is_mock.is_(False)).limit(1)).first():
+        raise HTTPException(
+            status_code=409,
+            detail="The database has real calls, so it was not reset. Use `python -m app.seed --reset` to wipe it deliberately.",
+        )
+    db.close()
     counts = reset_and_seed()
     return {"status": "ok", **counts}

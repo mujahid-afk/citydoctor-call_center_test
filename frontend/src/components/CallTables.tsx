@@ -2,6 +2,7 @@ import { Eye, Phone } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Call } from "../api";
 import { formatDateParts } from "../lib/format";
+import { isDialable } from "../lib/routing";
 import { EmptyState, ErrorBanner, TableSkeleton, btnGhost, td, th } from "./ui";
 
 export interface CallTableProps {
@@ -64,9 +65,11 @@ export function CallTable({ columns, emptyText, calls, error, onRetry, onOpen, o
                   <button type="button" className={btnGhost} onClick={(e) => { e.stopPropagation(); onOpen(call); }}>
                     <Eye className="h-3.5 w-3.5" /> View
                   </button>
-                  <button type="button" className={btnGhost} onClick={(e) => { e.stopPropagation(); onDial(call.customer_phone); }}>
-                    <Phone className="h-3.5 w-3.5" /> {actionLabel}
-                  </button>
+                  {isDialable(call.customer_phone) && (
+                    <button type="button" className={btnGhost} onClick={(e) => { e.stopPropagation(); onDial(call.customer_phone); }}>
+                      <Phone className="h-3.5 w-3.5" /> {actionLabel}
+                    </button>
+                  )}
                 </div>
               </td>
             </tr>

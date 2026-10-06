@@ -96,6 +96,8 @@ def delete_booking(booking_id: str, db: DbSession):
     booking = booking_service.get_booking_or_404(db, booking_id)
     for call in db.scalars(select(Call).where(Call.booking_id == booking.id)):
         call.booking_id = None
+        if call.outcome == "booked":
+            call.outcome = None
     db.delete(booking)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

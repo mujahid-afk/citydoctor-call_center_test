@@ -42,9 +42,24 @@ def phone_digits(phone: str | None) -> str:
     return re.sub(r"\D", "", phone or "")
 
 
-def _phone_suffix(phone: str | None) -> str:
-    """Last 9 digits: matches +971501234567, 971501234567 and 0501234567 alike."""
-    return phone_digits(phone)[-9:]
+# Numbers without an international prefix are national (UAE).
+DEFAULT_COUNTRY_CODE = "971"
+
+
+def national_number(phone: str | None) -> str:
+    """The number without its international or trunk prefix, so every format of it compares equal.
+
+    +971501234567, 00971501234567, 971501234567, 0501234567 -> 501234567
+    +97142000104, 042000104 (8-digit landline)              -> 42000104
+    """
+    digits = phone_digits(phone)
+    if digits.startswith("00"):
+        digits = digits[2:]
+    elif digits.startswith("0"):
+        return digits[1:]
+    if digits.startswith(DEFAULT_COUNTRY_CODE) and len(digits) > len(DEFAULT_COUNTRY_CODE) + 6:
+        return digits[len(DEFAULT_COUNTRY_CODE):]
+    return digits
 
 
 def label_key(value: str | None) -> str:
@@ -54,16 +69,16 @@ def label_key(value: str | None) -> str:
 
 # --------------------------------------------------------------------------- lookups
 def find_customer_by_phone(db: Session, phone: str | None) -> Customer | None:
-    suffix = _phone_suffix(phone)
-    if not suffix:
+    number = national_number(phone)
+    if not number:
         return None
     exact = db.scalars(select(Customer).where(Customer.phone == phone)).first()
     if exact:
         return exact
-    if len(suffix) < 6:  # short extensions only match exactly
+    if len(number) < 6:  # short extensions only match exactly
         return None
-    for customer in db.scalars(select(Customer).where(Customer.phone.like(f"%{suffix}"))):
-        if _phone_suffix(customer.phone) == suffix:
+    for customer in db.scalars(select(Customer).where(Customer.phone.like(f"%{number}"))):
+        if national_number(customer.phone) == number:
             return customer
     return None
 
@@ -78,10 +93,10 @@ def resolve_brand(
         for brand in db.scalars(select(Brand)):
             if label_key(brand.name) == key:
                 return brand
-    suffix = _phone_suffix(number)
-    if suffix:
+    did = national_number(number)
+    if did:
         for brand in db.scalars(select(Brand)):
-            if _phone_suffix(brand.phone_number) == suffix:
+            if national_number(brand.phone_number) == did:
                 return brand
     return None
 
@@ -269,6 +284,8 @@ def create_call(db: Session, payload: CallCreate) -> Call:
     data["started_at"] = naive_utc(data["started_at"]) or utcnow()
     data["queue_entered_at"] = naive_utc(data["queue_entered_at"])
     call = Call(**data)
+    if call.customer_name and not any(ch.isalpha() for ch in call.customer_name):
+        call.customer_name = None  # the trunk sends the caller's number as the display name
     _link_customer(db, call)
 
     # Brand: explicit id > X-Brand label > the queue's brand > called DID.

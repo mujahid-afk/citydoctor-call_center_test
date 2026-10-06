@@ -6,7 +6,7 @@ import re
 from datetime import date, datetime, timezone
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -37,9 +37,30 @@ def normalize_phone(value: str) -> str:
     return cleaned
 
 
+HIDDEN_CALLER = "anonymous"
+
+
+def normalize_caller_id(value: object) -> str:
+    """Caller ID of a call: a phone number when there is one, else 'anonymous'.
+
+    Unlike a customer's phone, a call is never rejected over its caller ID: withheld
+    numbers arrive as 'anonymous', 'Restricted', 'unknown' or nothing at all.
+    """
+    cleaned = re.sub(r"[\s\-().]", "", str(value or ""))
+    if cleaned.startswith("00"):
+        cleaned = "+" + cleaned[2:]
+    return cleaned if re.fullmatch(r"\+?[0-9*#]{1,32}", cleaned) else HIDDEN_CALLER
+
+
 def validate_time(value: str) -> str:
     if not _TIME_RE.match(value):
         raise ValueError("Time must be in HH:MM (24h) format")
+    return value
+
+
+def validate_not_past(value: date) -> date:
+    if value < date.today():
+        raise ValueError("Appointment date is in the past")
     return value
 
 
@@ -49,7 +70,9 @@ def _label(limit: int) -> AfterValidator:
 
 
 Phone = Annotated[str, AfterValidator(normalize_phone)]
+CallerId = Annotated[str, BeforeValidator(normalize_caller_id)]
 TimeHHMM = Annotated[str, AfterValidator(validate_time)]
+AppointmentDate = Annotated[date, AfterValidator(validate_not_past)]
 
 
 class ORMModel(BaseModel):
@@ -162,7 +185,7 @@ class CallOut(ORMModel):
 
 class CallCreate(BaseModel):
     direction: Direction
-    customer_phone: Phone
+    customer_phone: CallerId = HIDDEN_CALLER
     status: Status
     customer_id: int | None = None
     customer_name: str | None = None
@@ -243,7 +266,7 @@ class BreakdownRow(BaseModel):
 class BookingCreate(BaseModel):
     customer_id: int
     service: str = Field(min_length=1, max_length=120)
-    appointment_date: date
+    appointment_date: AppointmentDate
     appointment_time: TimeHHMM
     call_id: int | None = None
     notes: str | None = None
@@ -251,7 +274,7 @@ class BookingCreate(BaseModel):
 
 class BookingUpdate(BaseModel):
     service: str | None = None
-    appointment_date: date | None = None
+    appointment_date: AppointmentDate | None = None
     appointment_time: TimeHHMM | None = None
     status: BookingStatusLiteral | None = None
     notes: str | None = None
