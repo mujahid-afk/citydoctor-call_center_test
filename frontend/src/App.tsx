@@ -218,7 +218,7 @@ function Dashboard({ handlerRef }: { handlerRef: MutableRefObject<Handler | null
 
           <StatsCards stats={stats} loading={!stats && !loadError} />
 
-          <div className="grid gap-6 xl:grid-cols-[380px_1fr]">
+          <div className="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
             <SoftPhone brands={brands} number={number} onNumberChange={setNumber} onSimulateIncoming={() => void simulateIncoming()} simulating={simulating} />
             <ActiveCallPanel
               brands={brands}
