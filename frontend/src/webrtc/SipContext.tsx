@@ -46,6 +46,8 @@ interface SipContextValue {
   toggleMute(): void;
   toggleHold(): Promise<void>;
   sendDtmf(digit: string): void;
+  /** Blind transfer of the answered call to an extension or number. */
+  transfer(target: string): Promise<void>;
   simulateIncomingCall(from: string, invite?: SimulatedInvite): void;
   enableAudio(): Promise<void>;
   dismissLastCall(): void;
@@ -240,6 +242,12 @@ export function SipProvider({
       toggleMute: () => void run((c) => (call?.muted ? c.unmute() : c.mute())),
       toggleHold: () => run((c) => (call?.held ? c.resume() : c.hold())),
       sendDtmf: (digit) => clientRef.current?.sendDtmf(digit),
+      transfer: (target) =>
+        run(async (c) => {
+          const normalized = normalize(target);
+          if (!normalized) throw new Error("Enter an extension or number to transfer to.");
+          await c.transfer(normalized);
+        }),
       simulateIncomingCall: (from, invite) =>
         void run((c) => {
           if (!(c instanceof MockSipClient)) throw new Error("Simulated calls are only available in mock mode.");

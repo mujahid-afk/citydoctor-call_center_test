@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import or_, select
@@ -277,7 +277,52 @@ def _create_queue(db: Session, name: str, brand: Brand | None) -> Queue:
     return queue
 
 
+# A call still "in progress" after this long lost its end event (page reloaded or closed mid-call).
+STALE_RINGING = timedelta(minutes=10)
+STALE_ANSWERED = timedelta(hours=8)
+STALE_NOTE = "Closed automatically: the softphone never reported the end of this call (page reloaded or closed)."
+
+
+def close_stale_calls(db: Session) -> int:
+    """Finish calls stuck in ringing/calling/answered so stats don't count them as in progress forever."""
+    now = utcnow()
+    stale = db.scalars(
+        select(Call).where(
+            or_(
+                Call.status.in_(("ringing", "calling")) & (Call.started_at < now - STALE_RINGING),
+                (Call.status == "answered") & (Call.started_at < now - STALE_ANSWERED),
+            )
+        )
+    ).all()
+    for call in stale:
+        if call.status == "answered":
+            call.status = "completed"
+            call.ended_at = call.answered_at  # real end unknown; talk time stays 0 rather than invented
+        else:
+            call.status = "missed" if call.direction == "inbound" else "failed"
+            call.ended_at = call.started_at
+        call.notes = f"{call.notes}\n{STALE_NOTE}" if call.notes else STALE_NOTE
+        _apply_lifecycle(call, explicit_duration=False)
+    if stale:
+        db.commit()
+        logger.info("Closed %d stale call(s)", len(stale))
+    return len(stale)
+
+
 def create_call(db: Session, payload: CallCreate) -> Call:
+    # The same SIP call logged again (e.g. the page reloaded mid-call): update it, don't duplicate it.
+    if payload.sip_call_id:
+        existing = db.scalars(
+            select(Call).where(Call.sip_call_id == payload.sip_call_id, Call.direction == payload.direction)
+        ).first()
+        if existing:
+            if payload.status in TERMINAL_CALL_STATUSES and existing.status in ACTIVE_CALL_STATUSES:
+                update = {"status": payload.status}
+                if payload.notes:
+                    update["notes"] = payload.notes
+                return update_call(db, existing, CallUpdate(**update))
+            return existing
+    close_stale_calls(db)
     if payload.customer_id and not db.get(Customer, payload.customer_id):
         raise HTTPException(status_code=404, detail="Customer not found")
     data = payload.model_dump()

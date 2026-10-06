@@ -101,6 +101,7 @@ abstract class BaseSipClient implements SipClient {
   abstract hold(): Promise<void>;
   abstract resume(): Promise<void>;
   abstract sendDtmf(digit: string): void;
+  abstract transfer(target: string): Promise<void>;
 
   attachRemoteAudio(element: HTMLAudioElement | null): void {
     this.remoteAudio = element;
@@ -298,6 +299,11 @@ export class MockSipClient extends BaseSipClient {
   sendDtmf(): void {
     /* nothing to send in mock mode */
   }
+
+  async transfer(target: string): Promise<void> {
+    if (this.current?.state !== "answered") throw new SipError("Transfer is only possible during an answered call.");
+    this.finish("transferred", { error: `Transferred to ${target}` });
+  }
 }
 
 // ============================================================================ real (SIP.js)
@@ -350,22 +356,52 @@ export class RealSipClient extends BaseSipClient {
   private remoteAccepted = false;
   /** Last SIP.js warning/error, appended to otherwise-unexplained failures. */
   private lastSipLog: string | null = null;
+  /** Reconnect automatically after network/PBX drops (off after an explicit disconnect). */
+  private autoReconnect = false;
+  private reconnectAttempt = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private config: SipConfig,
     events: SipClientEvents,
   ) {
     super(events);
+    // Back on the network: retry at once instead of waiting for the backoff timer.
+    window.addEventListener("online", () => {
+      if (this.autoReconnect && this.registration !== "registered" && this.registration !== "connecting") void this.establish();
+    });
   }
 
   // ------------------------------------------------------------------ registration
   async connect(): Promise<void> {
+    this.autoReconnect = true;
+    this.reconnectAttempt = 0;
+    await this.establish();
+  }
+
+  /** Retry with backoff (2s, 4s, 8s ... 30s) after a network / PBX drop. Not used for config or auth errors. */
+  private scheduleReconnect(reason: string): void {
+    if (!this.autoReconnect) return;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    const delay = Math.min(30_000, 2_000 * 2 ** this.reconnectAttempt);
+    this.reconnectAttempt += 1;
+    this.setRegistration("failed", `${reason} Reconnecting automatically in ${Math.round(delay / 1000)}s...`);
+    console.warn(`[softphone] reconnect attempt ${this.reconnectAttempt} in ${delay / 1000}s`);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.establish();
+    }, delay);
+  }
+
+  private async establish(): Promise<void> {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     const problems = validateSipConfig(this.config);
     if (problems.length) {
       this.setRegistration("failed", `SIP configuration incomplete: ${problems.join("; ")}`);
       return;
     }
-    await this.disconnect();
+    await this.teardown();
     this.setRegistration("connecting");
 
     const uri = UserAgent.makeURI(this.config.uri);
@@ -399,7 +435,7 @@ export class RealSipClient extends BaseSipClient {
         onDisconnect: (error) => {
           if (!error) return;
           if (this.current) this.terminateCurrent("failed", "Connection to the PBX was lost during the call.");
-          this.setRegistration("failed", `Connection to the PBX lost (${error.message}). Check network/VPN and click Reconnect.`);
+          this.scheduleReconnect(`Connection to the PBX lost (${error.message}).`);
         },
       },
     });
@@ -409,8 +445,7 @@ export class RealSipClient extends BaseSipClient {
       await ua.start();
     } catch (error) {
       this.ua = null;
-      this.setRegistration(
-        "failed",
+      this.scheduleReconnect(
         `Cannot open WebSocket to ${this.config.wssUrl} (${(error as Error).message}). ` +
           "Check that the PBX is reachable on this network, the port is open, and the TLS certificate is trusted " +
           `(open ${this.config.wssUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:")} in a browser tab and accept it).`,
@@ -421,14 +456,18 @@ export class RealSipClient extends BaseSipClient {
     const registerer = new Registerer(ua, { expires: 300 });
     this.registerer = registerer;
     registerer.stateChange.addListener((state) => {
-      if (state === RegistererState.Registered) this.setRegistration("registered");
-      if (state === RegistererState.Unregistered && this.registration === "registered") this.setRegistration("unregistered");
+      if (state === RegistererState.Registered) {
+        this.reconnectAttempt = 0;
+        this.setRegistration("registered");
+      }
+      // Lost while registered (refresh failed, PBX restarted): register again.
+      if (state === RegistererState.Unregistered && this.registration === "registered") this.scheduleReconnect("Registration with the PBX was lost.");
     });
 
     let answered = false;
     const timeout = setTimeout(() => {
       if (!answered && this.registration === "connecting") {
-        this.setRegistration("failed", "No answer to REGISTER from the PBX. Check the SIP domain and that the extension exists.");
+        this.scheduleReconnect("No answer to REGISTER from the PBX. Check the SIP domain and that the extension exists.");
       }
     }, REGISTRATION_TIMEOUT_MS);
     try {
@@ -459,6 +498,13 @@ export class RealSipClient extends BaseSipClient {
   }
 
   async disconnect(): Promise<void> {
+    this.autoReconnect = false;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    await this.teardown();
+  }
+
+  private async teardown(): Promise<void> {
     if (this.current) await this.hangup().catch(() => undefined);
     try {
       if (this.registerer && this.registration === "registered") await this.registerer.unregister();
@@ -725,6 +771,31 @@ export class RealSipClient extends BaseSipClient {
         },
       })
       .catch(() => undefined);
+  }
+
+  /** Blind transfer (SIP REFER): the PBX connects the caller to ``target`` and we drop out. */
+  async transfer(target: string): Promise<void> {
+    const session = this.session;
+    if (!session || session.state !== SessionState.Established || !this.current) throw new SipError("Transfer needs an answered call.");
+    const domain = this.config.domain || UserAgent.makeURI(this.config.uri)?.host;
+    const referTo = UserAgent.makeURI(`sip:${target}@${domain}`);
+    if (!referTo) throw new SipError(`Cannot build a SIP URI for "${target}".`);
+    await new Promise<void>((resolve, reject) => {
+      session
+        .refer(referTo, {
+          requestDelegate: {
+            onAccept: () => {
+              this.pendingEnd = { reason: "transferred", error: `Transferred to ${target}` };
+              // The PBX normally hangs up our leg itself; make sure it ends.
+              this.later(3000, () => void session.bye().catch(() => undefined));
+              resolve();
+            },
+            onReject: (response: IncomingResponse) =>
+              reject(new SipError(`PBX refused the transfer (${response.message.statusCode} ${response.message.reasonPhrase})`)),
+          },
+        })
+        .catch((error: Error) => reject(new SipError(`Transfer failed: ${error.message}`)));
+    });
   }
 
   /** Call again after a user gesture if the browser blocked autoplay. */

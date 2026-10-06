@@ -24,6 +24,7 @@ export type CallEndReason =
   | "rejected" // declined by us (inbound) or by the callee (486/603)
   | "missed" // never answered (caller cancelled, no answer, timeout)
   | "busy_rejected" // inbound auto-rejected because we were already on a call
+  | "transferred" // handed to another extension/number (blind transfer, SIP REFER)
   | "failed"; // network / PBX / media error
 
 export interface SipCall {
@@ -91,6 +92,8 @@ export interface SipClient {
   hold(): Promise<void>;
   resume(): Promise<void>;
   sendDtmf(digit: string): void;
+  /** Blind transfer of the answered call; ``target`` is already normalized for the PBX dial plan. */
+  transfer(target: string): Promise<void>;
   /** Element used for remote audio playback (real mode). */
   attachRemoteAudio(element: HTMLAudioElement | null): void;
 }

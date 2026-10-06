@@ -12,6 +12,8 @@ function finalStatus(call: SipCall): CallStatus {
       return "completed";
     case "rejected":
       return "rejected";
+    case "transferred":
+      return "transferred";
     case "missed":
     case "busy_rejected":
       return "missed";

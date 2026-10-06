@@ -1,4 +1,4 @@
-import { Delete, Mic, MicOff, Pause, Phone, PhoneIncoming, PhoneOff, Play, RefreshCw, Volume2 } from "lucide-react";
+import { Delete, Mic, MicOff, Pause, Phone, PhoneForwarded, PhoneIncoming, PhoneOff, Play, RefreshCw, Volume2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { PURPOSES, type Brand } from "../api";
 import { formatDuration } from "../lib/format";
@@ -45,6 +45,7 @@ export function SoftPhone({
   const { call, registration } = sip;
   const [brandId, setBrandId] = useState<number | "">("");
   const [purpose, setPurpose] = useState<string>("Follow Up");
+  const [transferTo, setTransferTo] = useState("");
   const now = useNow(call?.state === "answered");
 
   useEffect(() => {
@@ -209,6 +210,26 @@ export function SoftPhone({
             <button type="button" onClick={() => void sip.hangup()} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700">
               <PhoneOff className="h-4 w-4" /> Hang Up
             </button>
+            {onCall && (
+              <form
+                className="col-span-3 flex gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (transferTo.trim()) void sip.transfer(transferTo).then(() => setTransferTo(""));
+                }}
+              >
+                <input
+                  value={transferTo}
+                  onChange={(e) => setTransferTo(e.target.value)}
+                  placeholder="Transfer to ext. or number"
+                  className={`${inputClass} min-w-0 flex-1`}
+                  aria-label="Transfer to"
+                />
+                <button type="submit" disabled={!transferTo.trim()} className={btnSecondary}>
+                  <PhoneForwarded className="h-4 w-4" /> Transfer
+                </button>
+              </form>
+            )}
           </div>
         ) : (
           <button

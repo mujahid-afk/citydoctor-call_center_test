@@ -17,6 +17,7 @@ from .config import get_settings
 from .database import SessionLocal, init_db
 from .routers import bookings, brands, calls, client_logs, customers, queues, testing
 from .seed import seed
+from .services import call_service
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -26,6 +27,8 @@ logger = logging.getLogger("voice_crm")
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    with SessionLocal() as db:
+        call_service.close_stale_calls(db)
     if settings.auto_seed:
         with SessionLocal() as db:
             if seed(db):
