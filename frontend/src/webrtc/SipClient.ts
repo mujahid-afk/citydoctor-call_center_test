@@ -323,7 +323,8 @@ function labelFromHeader(value: string | undefined): string | undefined {
  */
 export function splitNamePrefix(displayName: string | undefined): { brand?: string; name?: string } {
   const text = (displayName ?? "").trim().replace(/^"(.*)"$/, "$1").trim();
-  const match = text.match(/^([^:]*[A-Za-z][^:]*):\s*(.*)$/);
+  // "City Doctor:0543187047", or without a separator: "City Doctor0543187047".
+  const match = text.match(/^([^:]*[A-Za-z][^:]*):\s*(.*)$/) ?? text.match(/^(.*[A-Za-z].*?)[\s\-:]*(\+?\d{3,})$/);
   if (!match) return { name: text || undefined };
   return { brand: match[1].trim(), name: match[2].trim() || undefined };
 }
