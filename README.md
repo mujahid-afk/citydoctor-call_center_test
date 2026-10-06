@@ -142,6 +142,13 @@ Extensions with 6 digits or fewer are always dialed as typed.
 
 These are usually not needed on the same LAN. Over a VPN or across NAT, set `VITE_STUN_URL` (e.g. `stun:stun.l.google.com:19302`). If audio is one-way or missing, set `VITE_TURN_URL`, `VITE_TURN_USERNAME` and `VITE_TURN_PASSWORD`.
 
+### Call tones
+
+* **Outbound:** while the call rings, the browser plays a ringback tone (400 Hz, UAE cadence). If FreePBX sends its own ringback as early media (SIP `183` with audio), that audio is played and the local tone stops once it is actually heard.
+* **Inbound:** a ringtone plays until the call is answered, rejected or missed. If the CRM tab is in the background, a desktop notification is shown too (the browser asks for permission on your first click).
+
+Tones need one click on the page first (browser autoplay policy).
+
 ### Microphone test
 
 Go to **Settings → Test microphone**. It asks for permission and shows a live input level bar for 6 seconds.

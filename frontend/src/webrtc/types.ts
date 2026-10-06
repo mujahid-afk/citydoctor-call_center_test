@@ -41,6 +41,8 @@ export interface SipCall {
   ivrPath?: string;
   /** Inbound only: when the caller entered the queue (X-Queue-Start, epoch ms); used for the wait time. */
   queueEnteredAt?: number;
+  /** Outbound only: the PBX sent early media (183), so it plays its own ringback. */
+  earlyMedia?: boolean;
   /** SIP Call-ID header. */
   sipCallId?: string;
   state: CallState;
