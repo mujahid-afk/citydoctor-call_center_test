@@ -5,7 +5,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { getSipConfig, normalizeDialNumber, publicSipSummary } from "./config";
-import { MockSipClient, RealSipClient, createSipClient } from "./SipClient";
+import { MockSipClient, RealSipClient, createSipClient, type SimulatedInvite } from "./SipClient";
 import type { RegistrationState, SipCall, SipClient, SipConfig, SipMode } from "./types";
 
 export type SipCallEventType = "incoming" | "started" | "ringing" | "answered" | "updated" | "ended" | "failed";
@@ -43,7 +43,7 @@ interface SipContextValue {
   toggleMute(): void;
   toggleHold(): Promise<void>;
   sendDtmf(digit: string): void;
-  simulateIncomingCall(from: string, calledNumber?: string, displayName?: string): void;
+  simulateIncomingCall(from: string, invite?: SimulatedInvite): void;
   enableAudio(): Promise<void>;
   dismissLastCall(): void;
   clearActionError(): void;
@@ -178,11 +178,11 @@ export function SipProvider({
       toggleMute: () => void run((c) => (call?.muted ? c.unmute() : c.mute())),
       toggleHold: () => run((c) => (call?.held ? c.resume() : c.hold())),
       sendDtmf: (digit) => clientRef.current?.sendDtmf(digit),
-      simulateIncomingCall: (from, calledNumber, displayName) =>
+      simulateIncomingCall: (from, invite) =>
         void run((c) => {
           if (!(c instanceof MockSipClient)) throw new Error("Simulated calls are only available in mock mode.");
           setLastEndedCall(null);
-          c.simulateIncomingCall(from, calledNumber, displayName);
+          c.simulateIncomingCall(from, invite);
         }),
       enableAudio: () =>
         run(async (c) => {

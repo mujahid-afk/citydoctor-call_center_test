@@ -1,11 +1,11 @@
 import { CalendarPlus, PhoneIncoming, PhoneOutgoing, Users, X } from "lucide-react";
-import type { Brand, Call, Customer } from "../api";
+import type { Brand, Call, Customer, Queue } from "../api";
 import { formatDuration, humanize } from "../lib/format";
+import { brandForCall } from "../lib/routing";
 import { useNow } from "../lib/useNow";
 import { useSip } from "../webrtc/SipContext";
 import type { SipCall } from "../webrtc/types";
 import { CustomerPanel } from "./CustomerPanel";
-import { matchBrand } from "./IncomingCallModal";
 import { OutcomeControl } from "./OutcomeControl";
 import { btnGhost, btnSecondary } from "./ui";
 
@@ -19,6 +19,7 @@ const END_LABEL: Record<string, string> = {
 
 export function ActiveCallPanel({
   brands,
+  queues,
   crmIds,
   refreshKey,
   onDial,
@@ -29,6 +30,7 @@ export function ActiveCallPanel({
   onSummarized,
 }: {
   brands: Brand[];
+  queues: Queue[];
   crmIds: Record<string, number>;
   refreshKey: number;
   onDial: (phone: string) => void;
@@ -54,7 +56,8 @@ export function ActiveCallPanel({
   }
 
   const crmId = crmIds[shown.id] ?? null;
-  const brand = matchBrand(brands, shown.calledNumber);
+  const brand = brandForCall(brands, queues, shown);
+  const brandName = brand?.name ?? shown.brandLabel;
   const talk = shown.answeredAt ? Math.floor(((shown.endedAt ?? now) - shown.answeredAt) / 1000) : 0;
 
   return (
@@ -62,7 +65,7 @@ export function ActiveCallPanel({
       <Header
         icon={shown.direction === "inbound" ? <PhoneIncoming className="h-4 w-4" /> : <PhoneOutgoing className="h-4 w-4" />}
         title={live ? "Active Call" : "Call Wrap-up"}
-        subtitle={`${humanize(shown.direction)} · ${shown.remoteNumber}${brand ? ` · ${brand.name}` : ""}${crmId ? ` · CRM #${crmId}` : ""}`}
+        subtitle={[humanize(shown.direction), shown.remoteNumber, brandName, shown.queueName, crmId && `CRM #${crmId}`].filter(Boolean).join(" · ")}
         action={
           ended && (
             <button type="button" className={btnGhost} onClick={sip.dismissLastCall}>

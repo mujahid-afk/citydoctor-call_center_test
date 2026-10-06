@@ -1,5 +1,5 @@
 import { Search, X } from "lucide-react";
-import { CALL_OUTCOMES, CALL_STATUSES, type Brand, type CallOutcome, type CallStatus, type Direction } from "../api";
+import { CALL_OUTCOMES, CALL_STATUSES, type Brand, type CallOutcome, type CallStatus, type Direction, type Queue } from "../api";
 import { humanize } from "../lib/format";
 import { btnGhost, inputClass } from "./ui";
 
@@ -7,16 +7,31 @@ export interface FilterState {
   search: string;
   direction: Direction | "";
   brandId: number | "";
+  queueId: number | "";
   status: CallStatus | "";
   outcome: CallOutcome | "";
   dateFrom: string; // YYYY-MM-DD (local)
   dateTo: string;
 }
 
-export const EMPTY_FILTERS: FilterState = { search: "", direction: "", brandId: "", status: "", outcome: "", dateFrom: "", dateTo: "" };
+export const EMPTY_FILTERS: FilterState = { search: "", direction: "", brandId: "", queueId: "", status: "", outcome: "", dateFrom: "", dateTo: "" };
 
-export function FiltersBar({ value, onChange, brands }: { value: FilterState; onChange: (next: FilterState) => void; brands: Brand[] }) {
+export function FiltersBar({
+  value,
+  onChange,
+  brands,
+  queues,
+}: {
+  value: FilterState;
+  onChange: (next: FilterState) => void;
+  brands: Brand[];
+  queues: Queue[];
+}) {
   const set = <K extends keyof FilterState>(key: K, v: FilterState[K]) => onChange({ ...value, [key]: v });
+  const brandQueues = value.brandId ? queues.filter((q) => q.brand_id === value.brandId) : queues;
+  const setBrand = (brandId: number | "") =>
+    // Drop a queue filter that belongs to another brand.
+    onChange({ ...value, brandId, queueId: brandId && queues.find((q) => q.id === value.queueId)?.brand_id !== brandId ? "" : value.queueId });
   const active = JSON.stringify(value) !== JSON.stringify(EMPTY_FILTERS);
   const select = `${inputClass} w-auto min-w-[8.5rem]`;
   return (
@@ -31,9 +46,13 @@ export function FiltersBar({ value, onChange, brands }: { value: FilterState; on
           <option value="inbound">Inbound</option>
           <option value="outbound">Outbound</option>
         </select>
-        <select className={select} value={value.brandId} onChange={(e) => set("brandId", e.target.value ? Number(e.target.value) : "")} aria-label="Brand">
+        <select className={select} value={value.brandId} onChange={(e) => setBrand(e.target.value ? Number(e.target.value) : "")} aria-label="Brand">
           <option value="">All brands</option>
           {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+        <select className={select} value={value.queueId} onChange={(e) => set("queueId", e.target.value ? Number(e.target.value) : "")} aria-label="Queue">
+          <option value="">All queues</option>
+          {brandQueues.map((q) => <option key={q.id} value={q.id}>{q.name}{q.active ? "" : " (inactive)"}</option>)}
         </select>
         <select className={select} value={value.status} onChange={(e) => set("status", e.target.value as FilterState["status"])} aria-label="Status">
           <option value="">All statuses</option>

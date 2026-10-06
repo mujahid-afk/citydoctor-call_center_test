@@ -1,4 +1,4 @@
-"""Seed demo data: 6 brands, 10 customers, 10 inbound calls, 10 outbound calls, 5 bookings.
+"""Seed demo data: 6 brands, 7 queues, 10 customers, 10 inbound calls, 10 outbound calls, 5 bookings.
 
 Usage (from backend/):
     python -m app.seed            # create tables; seed only if the database is empty
@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine, init_db
-from .models import Booking, Brand, Call, Customer, booking_reference, utcnow
+from .models import Booking, Brand, Call, Customer, Queue, booking_reference, utcnow
 
 # Fake DIDs: replace with the real numbers via PATCH /api/brands/{id}.
 BRANDS = [
@@ -25,6 +25,18 @@ BRANDS = [
     ("PhysioHub", "+97142000104"),
     ("Girls Formula", "+97142000105"),
     ("Guys Formula", "+97142000106"),
+]
+
+# Demo FreePBX queues (name as sent in X-Queue, brand, department, queue number).
+# Real queues are created automatically from the X-Queue header of the first call.
+QUEUES = [
+    ("CD-Booking", "City Doctor", "Booking", "400"),
+    ("CD-Enquiries", "City Doctor", "Enquiries", "401"),
+    ("DH-Booking", "DripHub", "Booking", "410"),
+    ("PP-Booking", "ProPeptides", "Booking", "420"),
+    ("PH-Booking", "PhysioHub", "Booking", "430"),
+    ("GF-Booking", "Girls Formula", "Booking", "440"),
+    ("GYF-Booking", "Guys Formula", "Booking", "450"),
 ]
 
 SERVICES = {
@@ -110,6 +122,12 @@ def seed(db: Session) -> bool:
     ]
     db.add_all(brands + customers)
     db.flush()
+    by_name = {b.name: b for b in brands}
+    queues = [Queue(name=n, brand_id=by_name[b].id, department=d, number=num) for n, b, d, num in QUEUES]
+    db.add_all(queues)
+    db.flush()
+    # Booking calls go to the brand's booking queue, inquiries to City Doctor's enquiries queue.
+    queue_for = {(by_name[b].id, d): q for (_, b, d, _), q in zip(QUEUES, queues)}
 
     booking_count = 0
 
@@ -130,6 +148,15 @@ def seed(db: Session) -> bool:
             ended_at=started + timedelta(seconds=ring + duration), duration_seconds=duration,
             is_mock=True, created_at=started, updated_at=started,
         )
+        if direction == "inbound":
+            queue = queue_for.get((brand.id, "Enquiries" if outcome == "inquiry" else "Booking"))
+            queue = queue or queue_for[(brand.id, "Booking")]
+            call.queue_id, call.queue_name = queue.id, queue.name
+            call.ivr_path = f"ivr-7>ivr-{8 + brands.index(brand)}"
+            # Wait = time in the queue before our phone rang + ring time.
+            queued = rng.randint(0, 60) if answered else rng.randint(20, 150)
+            call.wait_seconds = queued + ring
+            call.queue_entered_at = started - timedelta(seconds=queued)
         db.add(call)
         db.flush()
         return call
@@ -189,7 +216,9 @@ def seed(db: Session) -> bool:
 
 
 def counts(db: Session) -> dict[str, int]:
-    return {m.__tablename__: db.scalar(select(func.count()).select_from(m)) or 0 for m in (Brand, Customer, Call, Booking)}
+    return {
+        m.__tablename__: db.scalar(select(func.count()).select_from(m)) or 0 for m in (Brand, Queue, Customer, Call, Booking)
+    }
 
 
 def reset_and_seed() -> dict[str, int]:

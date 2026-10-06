@@ -20,7 +20,7 @@ import {
   type Web,
 } from "sip.js";
 import type { IncomingResponse } from "sip.js/lib/core";
-import { CALLED_NUMBER_HEADERS, validateSipConfig } from "./config";
+import { CALLED_NUMBER_HEADERS, ROUTING_HEADERS, validateSipConfig } from "./config";
 import type {
   CallEndReason,
   RegistrationState,
@@ -175,6 +175,10 @@ abstract class BaseSipClient implements SipClient {
 }
 
 // ============================================================================ mock
+export type SimulatedInvite = Partial<
+  Pick<SipCall, "remoteDisplayName" | "calledNumber" | "brandLabel" | "queueName" | "ivrPath" | "queueEnteredAt">
+>;
+
 /**
  * Simulates a registered extension. No network traffic.
  *
@@ -232,14 +236,13 @@ export class MockSipClient extends BaseSipClient {
     return snapshot;
   }
 
-  /** Mock-only: pretend FreePBX sent us an INVITE. */
-  simulateIncomingCall(from: string, calledNumber?: string, displayName?: string): void {
+  /** Mock-only: pretend FreePBX sent us an INVITE (with the headers its dialplan would add). */
+  simulateIncomingCall(from: string, invite: SimulatedInvite = {}): void {
     if (this.registration !== "registered") throw new SipError("Softphone is not registered.");
     const call = this.newCall({
+      ...invite,
       direction: "inbound",
       remoteNumber: from,
-      remoteDisplayName: displayName,
-      calledNumber,
       sipCallId: `mock-${Math.random().toString(36).slice(2, 12)}@mock-pbx`,
       state: "incoming",
     });
@@ -306,6 +309,21 @@ function userFromHeader(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const match = value.match(/(?:sips?|tel):([^@;>]+)/i);
   return (match ? match[1] : value).trim() || undefined;
+}
+
+/** A free-text routing header (X-Brand, X-Queue, ...): trimmed, unquoted, empty/"unset" ignored. */
+function labelFromHeader(value: string | undefined): string | undefined {
+  const text = (value ?? "").trim().replace(/^"(.*)"$/, "$1").trim();
+  return text && text.toLowerCase() !== "unset" ? text.slice(0, 200) : undefined;
+}
+
+/** X-Queue-Start: Unix time in seconds (or ms). Ignored when implausible (bad value or clocks far apart). */
+export function parseQueueStart(value: string | undefined, now = Date.now()): number | undefined {
+  const n = Number((value ?? "").trim());
+  if (!value || !Number.isFinite(n) || n <= 0) return undefined;
+  const ms = n < 1e12 ? n * 1000 : n;
+  if (ms > now + 60_000 || ms < now - 6 * 3_600_000) return undefined;
+  return Math.min(ms, now);
 }
 
 export class RealSipClient extends BaseSipClient {
@@ -519,12 +537,20 @@ export class RealSipClient extends BaseSipClient {
         break;
       }
     }
+    const routing = {
+      brandLabel: labelFromHeader(request.getHeader(ROUTING_HEADERS.brand)),
+      queueName: labelFromHeader(request.getHeader(ROUTING_HEADERS.queue)),
+      ivrPath: labelFromHeader(request.getHeader(ROUTING_HEADERS.ivrPath)),
+      queueEnteredAt: parseQueueStart(request.getHeader(ROUTING_HEADERS.queueStart)),
+    };
+    console.info("[softphone] incoming call routing", { from: remoteNumber, calledNumber, ...routing });
 
     const call = this.newCall({
       direction: "inbound",
       remoteNumber,
       remoteDisplayName: invitation.remoteIdentity.displayName || undefined,
       calledNumber,
+      ...routing,
       sipCallId: request.callId,
       state: "incoming",
     });

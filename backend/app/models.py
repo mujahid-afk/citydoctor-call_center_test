@@ -58,6 +58,31 @@ class Brand(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class Queue(Base):
+    """A FreePBX call queue (one per brand/department), matched by the X-Queue INVITE header.
+
+    Unknown queue names are created automatically the first time a call arrives from them.
+    """
+
+    __tablename__ = "queues"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Exactly as FreePBX sends it in X-Queue, e.g. "CD-Booking" (matched case-insensitively).
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    brand_id: Mapped[int | None] = mapped_column(ForeignKey("brands.id"), nullable=True, index=True)
+    department: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # FreePBX queue number (e.g. 400), for reference only.
+    number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    brand: Mapped[Brand | None] = relationship()
+
+    @property
+    def brand_name(self) -> str | None:
+        return self.brand.name if self.brand else None
+
+
 class Customer(Base):
     __tablename__ = "customers"
 
@@ -84,6 +109,13 @@ class Call(Base):
     brand_id: Mapped[int | None] = mapped_column(ForeignKey("brands.id"), nullable=True, index=True)
     brand_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     brand_number: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Inbound routing reported by FreePBX (X-Queue / X-IVR-Path / X-Queue-Start headers).
+    queue_id: Mapped[int | None] = mapped_column(ForeignKey("queues.id"), nullable=True, index=True)
+    queue_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    ivr_path: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    queue_entered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Inbound: seconds the caller waited for an agent (queue entry, or ring start, until answer/hang-up).
+    wait_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sip_call_id: Mapped[str | None] = mapped_column(String(200), index=True, nullable=True)
     sip_extension: Mapped[str | None] = mapped_column(String(80), nullable=True)
     elevenlabs_conversation_id: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)

@@ -101,6 +101,13 @@ export function CallDetailsModal({
               <Field label="Phone">{call.customer_phone}</Field>
               <Field label="Brand">{orDash(call.brand_name)}</Field>
               <Field label="Brand Number">{orDash(call.brand_number)}</Field>
+              {call.direction === "inbound" && (
+                <>
+                  <Field label="Queue">{orDash(call.queue_name)}</Field>
+                  <Field label="Wait Time">{formatDuration(call.wait_seconds)}</Field>
+                  <Field label="IVR Path"><span className="font-mono text-xs">{orDash(call.ivr_path)}</span></Field>
+                </>
+              )}
               <Field label="SIP Extension">{orDash(call.sip_extension)}</Field>
               <Field label="Call Status"><StatusBadge status={call.status} /></Field>
               <Field label="Call Outcome"><OutcomeBadge outcome={call.outcome} /></Field>

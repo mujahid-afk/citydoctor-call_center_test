@@ -1,4 +1,4 @@
-"""Call business logic: filtering, statistics, customer/brand matching and lifecycle rules.
+"""Call business logic: filtering, statistics, customer/brand/queue matching and lifecycle rules.
 
 The browser softphone reports call progress (POST /api/calls, PATCH /api/calls/{id});
 this module keeps the records consistent (answered_at, ended_at, duration, links).
@@ -6,12 +6,13 @@ this module keeps the records consistent (answered_at, ended_at, duration, links
 
 from __future__ import annotations
 
+import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..models import (
@@ -22,9 +23,12 @@ from ..models import (
     Brand,
     Call,
     Customer,
+    Queue,
     utcnow,
 )
 from ..schemas import CallCreate, CallUpdate
+
+logger = logging.getLogger("voice_crm.calls")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -41,6 +45,11 @@ def phone_digits(phone: str | None) -> str:
 def _phone_suffix(phone: str | None) -> str:
     """Last 9 digits: matches +971501234567, 971501234567 and 0501234567 alike."""
     return phone_digits(phone)[-9:]
+
+
+def label_key(value: str | None) -> str:
+    """Loose label comparison: 'City Doctor', 'CityDoctor' and 'city-doctor' are the same brand."""
+    return re.sub(r"[^a-z0-9]", "", (value or "").lower())
 
 
 # --------------------------------------------------------------------------- lookups
@@ -64,15 +73,26 @@ def resolve_brand(
 ) -> Brand | None:
     if brand_id:
         return db.get(Brand, brand_id)
-    if name:
-        brand = db.scalars(select(Brand).where(func.lower(Brand.name) == name.strip().lower())).first()
-        if brand:
-            return brand
+    key = label_key(name)
+    if key:
+        for brand in db.scalars(select(Brand)):
+            if label_key(brand.name) == key:
+                return brand
     suffix = _phone_suffix(number)
     if suffix:
         for brand in db.scalars(select(Brand)):
             if _phone_suffix(brand.phone_number) == suffix:
                 return brand
+    return None
+
+
+def find_queue(db: Session, name: str | None) -> Queue | None:
+    key = label_key(name)
+    if not key:
+        return None
+    for queue in db.scalars(select(Queue)):
+        if label_key(queue.name) == key:
+            return queue
     return None
 
 
@@ -89,6 +109,7 @@ class CallFilters:
     direction: str | None = None
     search: str | None = None
     brand_id: int | None = None
+    queue_id: int | None = None
     status: str | None = None
     outcome: str | None = None
     date_from: datetime | None = None
@@ -101,6 +122,8 @@ def _apply_filters(query, filters: CallFilters, include_direction: bool = True):
         query = query.where(Call.direction == filters.direction)
     if filters.brand_id:
         query = query.where(Call.brand_id == filters.brand_id)
+    if filters.queue_id:
+        query = query.where(Call.queue_id == filters.queue_id)
     if filters.status:
         query = query.where(Call.status == filters.status)
     if filters.outcome:
@@ -125,22 +148,69 @@ def list_calls(db: Session, filters: CallFilters) -> list[Call]:
     return list(db.scalars(query))
 
 
-def compute_stats(db: Session, filters: CallFilters) -> dict[str, int]:
-    rows = db.execute(
-        _apply_filters(select(Call.direction, Call.status, Call.booking_id, Call.duration_seconds), filters)
-    ).all()
-    talk_times = [r.duration_seconds for r in rows if r.status in ANSWERED_CALL_STATUSES and r.duration_seconds]
+_STAT_COLUMNS = (Call.direction, Call.status, Call.booking_id, Call.duration_seconds, Call.wait_seconds)
+
+
+def _average(values: list[int]) -> int:
+    return round(sum(values) / len(values)) if values else 0
+
+
+def _summarize(rows) -> dict[str, int]:
+    answered = [r for r in rows if r.status in ANSWERED_CALL_STATUSES]
+    finished = sum(r.status not in ACTIVE_CALL_STATUSES for r in rows)
+    waits = [r.wait_seconds for r in rows if r.direction == "inbound" and r.wait_seconds is not None]
     return {
         "total_calls": len(rows),
         "inbound_calls": sum(r.direction == "inbound" for r in rows),
         "outbound_calls": sum(r.direction == "outbound" for r in rows),
-        "answered": sum(r.status in ANSWERED_CALL_STATUSES for r in rows),
+        "answered": len(answered),
         "missed": sum(r.status in {"missed", "rejected"} for r in rows),
         "failed": sum(r.status == "failed" for r in rows),
-        "in_progress": sum(r.status in ACTIVE_CALL_STATUSES for r in rows),
+        "in_progress": len(rows) - finished,
         "bookings": sum(bool(r.booking_id) for r in rows),
-        "average_duration_seconds": round(sum(talk_times) / len(talk_times)) if talk_times else 0,
+        "answer_rate": round(100 * sum(r.status not in ACTIVE_CALL_STATUSES for r in answered) / finished) if finished else 0,
+        # Talk time of answered calls.
+        "average_duration_seconds": _average([r.duration_seconds for r in answered if r.duration_seconds]),
+        # Average speed of answer: wait of answered inbound calls. Max includes abandoned calls.
+        "average_wait_seconds": _average(
+            [r.wait_seconds for r in answered if r.direction == "inbound" and r.wait_seconds is not None]
+        ),
+        "max_wait_seconds": max(waits, default=0),
     }
+
+
+def compute_stats(db: Session, filters: CallFilters) -> dict[str, int]:
+    return _summarize(db.execute(_apply_filters(select(*_STAT_COLUMNS), filters)).all())
+
+
+def compute_breakdown(db: Session, filters: CallFilters, by: str) -> list[dict]:
+    """Per-queue (inbound only) or per-brand report rows, busiest first."""
+    if by == "queue":
+        filters = replace(filters, direction="inbound")
+        key_col, name_col, fallback = Call.queue_id, Call.queue_name, "No queue"
+        queues = {q.id: q for q in db.scalars(select(Queue).options(selectinload(Queue.brand)))}
+    else:
+        key_col, name_col, fallback = Call.brand_id, Call.brand_name, "No brand"
+        queues = {}
+    rows = db.execute(_apply_filters(select(key_col.label("key"), name_col.label("name"), *_STAT_COLUMNS), filters)).all()
+
+    groups: dict[tuple, list] = {}
+    for row in rows:
+        # Calls without an id are grouped by the label they arrived with (e.g. an unknown X-Brand).
+        groups.setdefault((row.key, None if row.key else row.name), []).append(row)
+
+    report = []
+    for (key, name), group in groups.items():
+        queue = queues.get(key)
+        report.append({
+            "id": key,
+            "name": queue.name if queue else (group[0].name if key else name) or fallback,
+            "brand_name": queue.brand_name if queue else None,
+            "department": queue.department if queue else None,
+            **_summarize(group),
+        })
+    report.sort(key=lambda r: (-r["total_calls"], r["name"].lower()))
+    return report
 
 
 # --------------------------------------------------------------------------- lifecycle
@@ -158,6 +228,12 @@ def _apply_lifecycle(call: Call, explicit_duration: bool) -> None:
             call.duration_seconds = max(0, int((call.ended_at - start).total_seconds())) if start else 0
         if call.outcome is None and call.booking_id:
             call.outcome = "booked"
+    if call.direction == "inbound" and call.wait_seconds is None:
+        # Caller's wait: from entering the queue (or the INVITE reaching us) until answer or hang-up.
+        until = call.answered_at or (call.ended_at if call.status in TERMINAL_CALL_STATUSES else None)
+        if until:
+            since = call.queue_entered_at or call.started_at
+            call.wait_seconds = max(0, int((until - since).total_seconds()))
 
 
 def _link_customer(db: Session, call: Call) -> None:
@@ -177,15 +253,37 @@ def _link_brand(db: Session, call: Call, brand: Brand | None) -> None:
         call.brand_number = call.brand_number or brand.phone_number
 
 
+def _create_queue(db: Session, name: str, brand: Brand | None) -> Queue:
+    """First call from a queue the CRM doesn't know yet: remember it (edit it via PATCH /api/queues/{id})."""
+    queue = Queue(name=name.strip(), brand_id=brand.id if brand else None)
+    db.add(queue)
+    db.flush()
+    logger.info("New queue %r registered from an incoming call (brand: %s)", queue.name, brand.name if brand else "unknown")
+    return queue
+
+
 def create_call(db: Session, payload: CallCreate) -> Call:
     if payload.customer_id and not db.get(Customer, payload.customer_id):
         raise HTTPException(status_code=404, detail="Customer not found")
     data = payload.model_dump()
     data["started_at"] = naive_utc(data["started_at"]) or utcnow()
+    data["queue_entered_at"] = naive_utc(data["queue_entered_at"])
     call = Call(**data)
     _link_customer(db, call)
-    brand = resolve_brand(db, brand_id=payload.brand_id, name=payload.brand_name, number=payload.brand_number)
+
+    # Brand: explicit id > X-Brand label > the queue's brand > called DID.
+    brand = resolve_brand(db, brand_id=payload.brand_id, name=payload.brand_name)
+    queue = find_queue(db, payload.queue_name)
+    if brand is None and queue and queue.brand_id:
+        brand = db.get(Brand, queue.brand_id)
+    if brand is None:
+        brand = resolve_brand(db, number=payload.brand_number)
+    if queue is None and label_key(payload.queue_name):
+        queue = _create_queue(db, payload.queue_name, brand)
     _link_brand(db, call, brand)
+    if queue:
+        call.queue_id = queue.id
+        call.queue_name = queue.name
     _apply_lifecycle(call, explicit_duration=False)
     db.add(call)
     db.commit()

@@ -63,9 +63,10 @@ Open **http://localhost:5173**. The API docs are at http://localhost:8000/docs.
 
 * SQLite file: `backend/voice_crm.db`. It is created automatically on first start. Relative `DATABASE_URL` paths resolve against `backend/`.
 * **Initialize:** starting the backend creates the tables. Alternatively run `python -m app.seed`.
-* **Seed:** demo data is inserted automatically when the database is empty (`AUTO_SEED=true`): 6 brands, 10 customers, 10 inbound calls, 10 outbound calls and 5 bookings.
+* **Seed:** demo data is inserted automatically when the database is empty (`AUTO_SEED=true`): 6 brands, 7 demo queues, 10 customers, 10 inbound calls, 10 outbound calls and 5 bookings.
 * **Reset and re-seed:** run `python -m app.seed --reset` (from `backend/`), or `POST /api/testing/reset`.
-* There are no migrations in this MVP. If the schema changes, delete `voice_crm.db` and restart.
+* There is no migration tool in this MVP. On start-up, new nullable columns are added to existing tables automatically (logged as `Added column ...`), so an existing `voice_crm.db` keeps its data. For anything bigger, delete `voice_crm.db` and restart.
+* An existing database gets no demo queues. Run `python -m app.seed --reset` if you want them for mock demos. Real queues are created from the first call that carries `X-Queue`.
 
 ---
 
@@ -76,7 +77,7 @@ Mock mode needs no network connection to the PBX. The softphone pretends to be r
 **Simulate an incoming call:** click **Simulate Incoming Call** under the softphone.
 
 1. The backend picks a random caller (`GET /api/testing/random-caller`). About 70% are existing customers.
-2. The incoming-call popup shows the number, the matched customer (or *Unknown Customer*) and the brand.
+2. The incoming-call popup shows the number, the matched customer (or *Unknown Customer*), the brand, the queue, the IVR path and how long the caller has been waiting. These are the same values FreePBX will send in real mode (see section 5).
 3. Click **Answer**. The timer starts, and you can use Mute, Hold and Hang Up.
 4. After hang-up, the **Call Wrap-up** panel lets you choose an outcome, add notes, **Save outcome** and **Book appointment**.
 5. For an unknown caller, use **Create Customer** in the right panel. Earlier calls from that number are linked to the new customer automatically.
@@ -164,7 +165,7 @@ The browser console (`[sip.js …]` lines) has more detail. Authorization header
 
 ---
 
-## 5. Brands
+## 5. Brands, queues and IVR
 
 There are 6 seeded brands with **fake** DIDs (`+9714200010x`). Set the real ones with:
 
@@ -173,10 +174,60 @@ curl -X PATCH http://localhost:8000/api/brands/1 -H 'Content-Type: application/j
      -d '{"phone_number": "+9714XXXXXXX", "elevenlabs_agent_id": "agent_..."}'
 ```
 
-* **Inbound:** the brand is matched from the called DID. The softphone reads it from the INVITE headers `X-Called-Number`, `X-DID`, `P-Called-Party-ID`, `Diversion` or `To`. Have FreePBX add `X-Called-Number` (e.g. via a dialplan `PJSIP_HEADER`) for reliable matching.
 * **Outbound:** the agent picks the brand in the softphone.
+* **Inbound:** all brands share one public number (8000600), so the brand can't be taken from the DID alone. The FreePBX dialplan labels the call before it enters the queue, and the softphone reads these INVITE headers:
 
-All brands share one codebase. Add more with the API or seed script; the routing per DID stays in FreePBX.
+| Header | Example | Used for |
+|---|---|---|
+| `X-Brand` | `City Doctor` | Brand. Matched loosely, so `CityDoctor` also works. |
+| `X-Queue` | `CD-Booking` | Queue. Unknown names are registered automatically on their first call. |
+| `X-IVR-Path` | `ivr-7>ivr-8` | Shown in the popup and stored on the call. |
+| `X-Called-Number` | `8000600` | Number the customer dialled (also tried: `X-DID`, `P-Called-Party-ID`, `Diversion`, `To`). |
+| `X-Queue-Start` | `1791280000` | Unix time (`${EPOCH}`) the caller entered the queue, used for the wait time. |
+
+Brand order: `X-Brand`, then the queue's brand, then the called DID. Every header is optional. Without them the call still works and shows *Unknown brand*. The browser console prints `[softphone] incoming call routing {...}` for every call, so you can check what arrived.
+
+### FreePBX dialplan (done by the PBX admin)
+
+FreePBX copies the `SIPHEADERS` hash onto the INVITE it sends to the extension (`func-apply-sipheaders`). Add this to `/etc/asterisk/extensions_custom.conf`:
+
+```ini
+; Label the call for the CRM, then return. ARG1 = brand, ARG2 = queue name.
+[crm-labels]
+exten => s,1,Set(HASH(__SIPHEADERS,X-Brand)=${ARG1})
+ same => n,Set(HASH(__SIPHEADERS,X-Queue)=${ARG2})
+ same => n,Set(HASH(__SIPHEADERS,X-Called-Number)=${FROM_DID})
+ same => n,Set(HASH(__SIPHEADERS,X-IVR-Path)=${IVR_CONTEXT_${IVR_CONTEXT}}>${IVR_CONTEXT})
+ same => n,Set(HASH(__SIPHEADERS,X-Queue-Start)=${EPOCH})
+ same => n,Return()
+
+; One entry per IVR option that leads to a queue.
+[crm-route]
+exten => cd-booking,1,Gosub(crm-labels,s,1(City Doctor,CD-Booking))
+ same => n,Goto(ext-queues,400,1)        ; 400 = the FreePBX queue number
+```
+
+Then, in FreePBX:
+
+1. **Admin → Custom Destinations:** add one per entry, e.g. target `crm-route,cd-booking,1`, description *CD Booking*.
+2. **Applications → IVR:** point the option (e.g. ivr-8, key 1) at that custom destination instead of the extension or queue.
+3. Click **Apply Config** (or run `fwconsole reload`).
+4. Check it: in the Asterisk CLI run `pjsip set logger on`, call 8000600, and look for `X-Brand` / `X-Queue` in the INVITE sent to the agent's extension.
+
+Keep the PBX and agent PCs on NTP. The wait time compares the PBX clock (`X-Queue-Start`) with the browser clock. Values more than 6 hours old or more than 60 seconds in the future are ignored, and the wait then counts from when the agent's phone started ringing.
+
+### Queues in the CRM
+
+* `GET /api/queues` lists them. A queue registered automatically takes its brand from the first call's brand. Set the brand, department or FreePBX number with `PATCH /api/queues/{id}`, or create queues up front with `POST /api/queues`:
+
+```bash
+curl -X POST http://localhost:8000/api/queues -H 'Content-Type: application/json' \
+     -d '{"name": "CD-Booking", "brand_id": 1, "department": "Booking", "number": "400"}'
+```
+
+* `name` must match what FreePBX sends in `X-Queue`. Matching ignores case, spaces and dashes.
+* **Wait time** of an inbound call: from `X-Queue-Start` (or, without it, from when the INVITE reached the browser) until the agent answered, or until the caller hung up.
+* **Reports** (dashboard → Reports) show per queue or per brand: calls, answered, missed, answer rate, average wait of answered calls, longest wait (including abandoned calls), average talk time and bookings. They use the dashboard filters. Clicking a row filters the dashboard by that queue or brand.
 
 ---
 
@@ -250,16 +301,20 @@ No SIP or VPN credentials belong in the backend.
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/health` | |
-| GET | `/api/stats` | Total, inbound, outbound, answered, missed, failed, bookings, average duration. Accepts the call filters. |
+| GET | `/api/stats` | Total, inbound, outbound, answered, missed, failed, bookings, average duration, average wait. Accepts the call filters. |
+| GET | `/api/stats/breakdown?by=queue\|brand` | Report rows per queue (inbound only) or per brand. Accepts the call filters. |
 | GET | `/api/brands` | |
+| GET | `/api/queues` | `active_only`, `brand_id` |
+| POST | `/api/queues` | `{name, brand_id?, department?, number?}`; `name` = FreePBX `X-Queue` value |
+| PATCH | `/api/queues/{id}` | Brand, department, number, name or active flag |
 | PATCH | `/api/brands/{id}` | DID, ElevenLabs agent ID, active flag |
 | GET | `/api/customers?search=` | |
 | GET | `/api/customers/{id}` | |
 | GET | `/api/customers/by-phone/{phone}` | Customer plus recent calls and bookings. Returns 404 for an unknown caller. Tolerant of number format. |
 | POST | `/api/customers` | |
 | PATCH | `/api/customers/{id}` | |
-| GET | `/api/calls` | Filters: `direction`, `status`, `outcome`, `brand_id`, `search`, `date_from`, `date_to`, `limit` |
-| POST | `/api/calls` | Softphone logs a call (`ringing` inbound / `calling` outbound) |
+| GET | `/api/calls` | Filters: `direction`, `status`, `outcome`, `brand_id`, `queue_id`, `search`, `date_from`, `date_to`, `limit` |
+| POST | `/api/calls` | Softphone logs a call (`ringing` inbound / `calling` outbound). Inbound also sends `brand_name`, `queue_name`, `ivr_path` and `queue_entered_at` from the INVITE headers. |
 | GET | `/api/calls/{id}` | |
 | PATCH | `/api/calls/{id}` | Status updates and ElevenLabs fields. `answered_at`, `ended_at` and duration are filled automatically. |
 | POST | `/api/calls/{id}/outcome` | `{ "outcome": "booked", "notes": "..." }` |
@@ -284,7 +339,8 @@ Outcomes: `booked`, `inquiry`, `interested`, `not_interested`, `callback`, `tran
 backend/app/
   main.py               FastAPI app, CORS, startup (create tables + auto-seed)
   config.py, database.py, models.py, schemas.py, seed.py
-  routers/              calls.py (+ /api/stats), customers.py, bookings.py, brands.py, testing.py
+  routers/              calls.py (+ /api/stats, /api/stats/breakdown), customers.py, bookings.py, brands.py,
+                        queues.py, testing.py
   services/             call_service.py (filters, stats, lifecycle rules), booking_service.py
 frontend/src/
   webrtc/
@@ -294,8 +350,9 @@ frontend/src/
                         reject, hangup, mute, unmute, hold, resume, DTMF, events
     SipContext.tsx      React provider and useSip(); components never import SIP.js
   lib/useCallLogger.ts  Maps softphone events to POST/PATCH /api/calls
+  lib/routing.ts        Brand/queue of a live call (X-Brand > queue's brand > DID)
   components/           SoftPhone, DialPad, IncomingCallModal, ActiveCallPanel, CustomerPanel,
-                        InboundCallsTable, OutboundCallsTable, CallDetailsModal, BookingModal, ...
+                        InboundCallsTable, OutboundCallsTable, CallDetailsModal, BookingModal, ReportsSection, ...
 ```
 
 ---

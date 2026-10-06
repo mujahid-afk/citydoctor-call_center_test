@@ -24,6 +24,18 @@ export interface Brand {
   created_at: string;
 }
 
+export interface Queue {
+  id: number;
+  /** As FreePBX sends it in X-Queue, e.g. "CD-Booking". */
+  name: string;
+  brand_id: number | null;
+  brand_name: string | null;
+  department: string | null;
+  number: string | null;
+  active: boolean;
+  created_at: string;
+}
+
 export interface Customer {
   id: number;
   name: string;
@@ -43,6 +55,12 @@ export interface Call {
   brand_id: number | null;
   brand_name: string | null;
   brand_number: string | null;
+  queue_id: number | null;
+  queue_name: string | null;
+  ivr_path: string | null;
+  queue_entered_at: string | null;
+  /** Inbound: seconds the caller waited (queue + ringing) until answer or hang-up. */
+  wait_seconds: number | null;
   sip_call_id: string | null;
   sip_extension: string | null;
   elevenlabs_conversation_id: string | null;
@@ -74,6 +92,28 @@ export interface Stats {
   in_progress: number;
   bookings: number;
   average_duration_seconds: number;
+  /** Average wait of answered inbound calls. */
+  average_wait_seconds: number;
+}
+
+export type BreakdownBy = "queue" | "brand";
+
+export interface BreakdownRow {
+  id: number | null;
+  name: string;
+  brand_name: string | null;
+  department: string | null;
+  total_calls: number;
+  inbound_calls: number;
+  outbound_calls: number;
+  answered: number;
+  missed: number;
+  failed: number;
+  bookings: number;
+  answer_rate: number;
+  average_wait_seconds: number;
+  max_wait_seconds: number;
+  average_duration_seconds: number;
 }
 
 export interface Booking {
@@ -100,6 +140,7 @@ export interface CallFilters {
   direction?: Direction | "";
   search?: string;
   brand_id?: number | "";
+  queue_id?: number | "";
   status?: CallStatus | "";
   outcome?: CallOutcome | "";
   date_from?: string;
@@ -112,7 +153,11 @@ export interface CallCreate {
   status: CallStatus;
   customer_name?: string | null;
   brand_id?: number | null;
+  brand_name?: string | null;
   brand_number?: string | null;
+  queue_name?: string | null;
+  ivr_path?: string | null;
+  queue_entered_at?: string;
   sip_call_id?: string | null;
   sip_extension?: string | null;
   purpose?: string | null;
@@ -131,6 +176,10 @@ export interface RandomCaller {
   brand_id: number | null;
   brand_name: string | null;
   brand_number: string | null;
+  queue_name: string | null;
+  ivr_path: string | null;
+  /** How long the simulated caller has already waited in the queue. */
+  wait_seconds: number;
 }
 
 export interface AISummary {
@@ -190,7 +239,10 @@ const json = (method: string, body: unknown): RequestInit => ({ method, body: JS
 export const api = {
   health: () => request<{ status: string; database: string; app_env: string }>("/api/health"),
   stats: (filters: CallFilters = {}) => request<Stats>(`/api/stats${query({ ...filters, direction: "" })}`),
+  breakdown: (by: BreakdownBy, filters: CallFilters = {}) =>
+    request<BreakdownRow[]>(`/api/stats/breakdown${query({ ...filters, by })}`),
   brands: () => request<Brand[]>("/api/brands"),
+  queues: () => request<Queue[]>("/api/queues"),
 
   customers: (search?: string) => request<Customer[]>(`/api/customers${query({ search })}`),
   customerByPhone: async (phone: string): Promise<CustomerLookup | null> => {

@@ -43,6 +43,11 @@ def validate_time(value: str) -> str:
     return value
 
 
+def _label(limit: int) -> AfterValidator:
+    """PBX-supplied labels: trimmed and truncated rather than rejected, so a call is never lost over a label."""
+    return AfterValidator(lambda v: (v.strip()[:limit] or None) if v is not None else None)
+
+
 Phone = Annotated[str, AfterValidator(normalize_phone)]
 TimeHHMM = Annotated[str, AfterValidator(validate_time)]
 
@@ -64,6 +69,33 @@ class BrandOut(ORMModel):
 class BrandUpdate(BaseModel):
     phone_number: str | None = None
     elevenlabs_agent_id: str | None = None
+    active: bool | None = None
+
+
+# ---------------------------------------------------------------- queues
+class QueueOut(ORMModel):
+    id: int
+    name: str
+    brand_id: int | None
+    brand_name: str | None
+    department: str | None
+    number: str | None
+    active: bool
+    created_at: UTCDateTime
+
+
+class QueueCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    brand_id: int | None = None
+    department: str | None = Field(default=None, max_length=80)
+    number: str | None = Field(default=None, max_length=20)
+
+
+class QueueUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    brand_id: int | None = None
+    department: str | None = Field(default=None, max_length=80)
+    number: str | None = Field(default=None, max_length=20)
     active: bool | None = None
 
 
@@ -102,6 +134,11 @@ class CallOut(ORMModel):
     brand_id: int | None
     brand_name: str | None
     brand_number: str | None
+    queue_id: int | None
+    queue_name: str | None
+    ivr_path: str | None
+    queue_entered_at: UTCDateTime | None
+    wait_seconds: int | None
     sip_call_id: str | None
     sip_extension: str | None
     elevenlabs_conversation_id: str | None
@@ -130,8 +167,12 @@ class CallCreate(BaseModel):
     customer_id: int | None = None
     customer_name: str | None = None
     brand_id: int | None = None
-    brand_name: str | None = None
+    brand_name: Annotated[str | None, _label(120)] = None  # X-Brand for inbound calls
     brand_number: str | None = None
+    # Inbound routing from the FreePBX INVITE headers (X-Queue, X-IVR-Path, X-Queue-Start).
+    queue_name: Annotated[str | None, _label(80)] = None
+    ivr_path: Annotated[str | None, _label(200)] = None
+    queue_entered_at: datetime | None = None
     sip_call_id: str | None = None
     sip_extension: str | None = None
     purpose: str | None = None
@@ -174,6 +215,27 @@ class Stats(BaseModel):
     failed: int
     in_progress: int
     bookings: int
+    average_duration_seconds: int
+    average_wait_seconds: int
+
+
+class BreakdownRow(BaseModel):
+    """One row of the per-queue / per-brand report."""
+
+    id: int | None
+    name: str
+    brand_name: str | None = None
+    department: str | None = None
+    total_calls: int
+    inbound_calls: int
+    outbound_calls: int
+    answered: int
+    missed: int
+    failed: int
+    bookings: int
+    answer_rate: int  # percent of calls answered
+    average_wait_seconds: int
+    max_wait_seconds: int
     average_duration_seconds: int
 
 

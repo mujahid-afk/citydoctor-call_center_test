@@ -1,6 +1,6 @@
 import { Menu, PhoneIncoming, PhoneOutgoing } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from "react";
-import { api, type Booking, type Brand, type Call, type CallFilters, type Stats } from "./api";
+import { api, type Booking, type Brand, type Call, type CallFilters, type Queue, type Stats } from "./api";
 import { ActiveCallPanel } from "./components/ActiveCallPanel";
 import { BookingModal, type BookingTarget } from "./components/BookingModal";
 import { BookingsSection } from "./components/BookingsSection";
@@ -9,6 +9,7 @@ import { EMPTY_FILTERS, FiltersBar, type FilterState } from "./components/Filter
 import { InboundCallsTable } from "./components/InboundCallsTable";
 import { IncomingCallModal } from "./components/IncomingCallModal";
 import { OutboundCallsTable } from "./components/OutboundCallsTable";
+import { ReportsSection } from "./components/ReportsSection";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar, type SectionId } from "./components/Sidebar";
 import { SoftPhone } from "./components/SoftPhone";
@@ -38,6 +39,7 @@ function toApiFilters(f: FilterState): CallFilters {
     search: f.search.trim(),
     direction: f.direction,
     brand_id: f.brandId,
+    queue_id: f.queueId,
     status: f.status,
     outcome: f.outcome,
     date_from: f.dateFrom ? startOfDayIso(f.dateFrom) : undefined,
@@ -48,6 +50,7 @@ function toApiFilters(f: FilterState): CallFilters {
 function Dashboard({ handlerRef }: { handlerRef: MutableRefObject<Handler | null> }) {
   const sip = useSip();
   const [brands, setBrands] = useState<Brand[]>([]);
+  const [queues, setQueues] = useState<Queue[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [inbound, setInbound] = useState<Call[] | null>(null);
   const [outbound, setOutbound] = useState<Call[] | null>(null);
@@ -81,13 +84,15 @@ function Dashboard({ handlerRef }: { handlerRef: MutableRefObject<Handler | null
     const showInbound = f.direction !== "outbound";
     const showOutbound = f.direction !== "inbound";
     try {
-      const [s, inb, outb, bk] = await Promise.all([
+      const [s, inb, outb, bk, qs] = await Promise.all([
         api.stats(f),
         showInbound ? api.calls({ ...f, direction: "inbound" }) : Promise.resolve([]),
         showOutbound ? api.calls({ ...f, direction: "outbound" }) : Promise.resolve([]),
         api.bookings(),
+        api.queues(), // new queues appear when their first call is logged
       ]);
       setStats(s);
+      setQueues(qs);
       setInbound(inb);
       setOutbound(outb);
       setBookings(bk);
@@ -145,7 +150,14 @@ function Dashboard({ handlerRef }: { handlerRef: MutableRefObject<Handler | null
     setSimulating(true);
     try {
       const caller = await api.randomCaller();
-      sip.simulateIncomingCall(caller.customer_phone, caller.brand_number ?? undefined, caller.customer_name ?? undefined);
+      sip.simulateIncomingCall(caller.customer_phone, {
+        remoteDisplayName: caller.customer_name ?? undefined,
+        calledNumber: caller.brand_number ?? undefined,
+        brandLabel: caller.brand_name ?? undefined,
+        queueName: caller.queue_name ?? undefined,
+        ivrPath: caller.ivr_path ?? undefined,
+        queueEnteredAt: caller.queue_name ? Date.now() - caller.wait_seconds * 1000 : undefined,
+      });
     } catch (error) {
       toast("error", (error as Error).message);
     } finally {
@@ -210,6 +222,7 @@ function Dashboard({ handlerRef }: { handlerRef: MutableRefObject<Handler | null
             <SoftPhone brands={brands} number={number} onNumberChange={setNumber} onSimulateIncoming={() => void simulateIncoming()} simulating={simulating} />
             <ActiveCallPanel
               brands={brands}
+              queues={queues}
               crmIds={crmIds}
               refreshKey={refreshKey}
               onDial={dialFromCrm}
@@ -230,7 +243,7 @@ function Dashboard({ handlerRef }: { handlerRef: MutableRefObject<Handler | null
             />
           </div>
 
-          <FiltersBar value={filters} onChange={setFilters} brands={brands} />
+          <FiltersBar value={filters} onChange={setFilters} brands={brands} queues={queues} />
 
           {showInbound && (
             <Card id="inbound">
@@ -255,11 +268,20 @@ function Dashboard({ handlerRef }: { handlerRef: MutableRefObject<Handler | null
             onChanged={changed}
           />
 
+          <ReportsSection
+            filters={toApiFilters(filters)}
+            reloadKey={lastUpdated}
+            onPick={(by, id) => {
+              setFilters((f) => (by === "queue" ? { ...f, queueId: id } : { ...f, brandId: id, queueId: "" }));
+              document.getElementById("inbound")?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          />
+
           <SettingsPanel backendOk={backendOk} />
         </main>
       </div>
 
-      <IncomingCallModal brands={brands} />
+      <IncomingCallModal brands={brands} queues={queues} />
 
       <CallDetailsModal
         callId={detailsId}

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import type { RegistrationState, SipMode } from "../webrtc/types";
 
-export type SectionId = "dashboard" | "inbound" | "outbound" | "customers" | "bookings" | "settings";
+export type SectionId = "dashboard" | "inbound" | "outbound" | "customers" | "bookings" | "reports" | "settings";
 
 interface Item {
   id: SectionId;
@@ -109,12 +109,7 @@ export function Sidebar({
           </div>
 
           <div className="pt-5" />
-          <div className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-slate-500">
-            <span className="flex items-center gap-3">
-              <ChartColumn className="h-4 w-4" /> Reports
-            </span>
-            <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-400">Soon</span>
-          </div>
+          {link({ id: "reports", label: "Reports", icon: ChartColumn })}
           {link({ id: "settings", label: "Settings", icon: Settings })}
         </nav>
 

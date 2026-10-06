@@ -35,6 +35,12 @@ export interface SipCall {
   remoteDisplayName?: string;
   /** Inbound only: the DID that was called, if the PBX passes it (used to match the brand). */
   calledNumber?: string;
+  /** Inbound only: routing labels the PBX dialplan adds to the INVITE (X-Brand, X-Queue, X-IVR-Path). */
+  brandLabel?: string;
+  queueName?: string;
+  ivrPath?: string;
+  /** Inbound only: when the caller entered the queue (X-Queue-Start, epoch ms); used for the wait time. */
+  queueEnteredAt?: number;
   /** SIP Call-ID header. */
   sipCallId?: string;
   state: CallState;

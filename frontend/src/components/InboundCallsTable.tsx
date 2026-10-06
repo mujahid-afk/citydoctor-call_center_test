@@ -9,6 +9,18 @@ export function InboundCallsTable(props: CallTableProps) {
     { label: "Phone", render: (c) => c.customer_phone },
     { label: "Brand", render: (c) => muted(c.brand_name) },
     { label: "Number", render: (c) => muted(c.brand_number) },
+    {
+      label: "Queue",
+      render: (c) =>
+        c.queue_name ? (
+          <div>
+            <p className="text-slate-900">{c.queue_name}</p>
+            {c.wait_seconds !== null && <p className="text-xs text-slate-500">waited {formatDuration(c.wait_seconds)}</p>}
+          </div>
+        ) : (
+          muted(null)
+        ),
+    },
     { label: "Extension / Agent", render: agentLabel },
     { label: "Duration", render: (c) => <span className="font-mono tabular-nums">{formatDuration(c.duration_seconds)}</span> },
     { label: "Status", render: (c) => <StatusBadge status={c.status} /> },

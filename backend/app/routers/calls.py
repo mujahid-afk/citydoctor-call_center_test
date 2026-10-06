@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..database import get_db
-from ..schemas import AISummaryIn, AISummaryOut, AIStatus, CallCreate, CallOut, CallOutcomeIn, CallUpdate, Stats
+from ..schemas import (
+    AISummaryIn,
+    AISummaryOut,
+    AIStatus,
+    BreakdownRow,
+    CallCreate,
+    CallOut,
+    CallOutcomeIn,
+    CallUpdate,
+    Stats,
+)
 from ..services import ai_service, call_service
 
 router = APIRouter(prefix="/api", tags=["calls"])
@@ -22,6 +32,7 @@ def call_filters(
     direction: Annotated[str | None, Query(pattern="^(inbound|outbound)$")] = None,
     search: str | None = None,
     brand_id: int | None = None,
+    queue_id: int | None = None,
     status_: Annotated[str | None, Query(alias="status")] = None,
     outcome: str | None = None,
     date_from: datetime | None = None,
@@ -29,7 +40,7 @@ def call_filters(
     limit: Annotated[int, Query(ge=1, le=1000)] = 200,
 ) -> call_service.CallFilters:
     return call_service.CallFilters(
-        direction=direction, search=search or None, brand_id=brand_id, status=status_ or None,
+        direction=direction, search=search or None, brand_id=brand_id, queue_id=queue_id, status=status_ or None,
         outcome=outcome or None, date_from=date_from, date_to=date_to, limit=limit,
     )
 
@@ -43,9 +54,15 @@ def stats(db: DbSession, filters: Filters):
     return call_service.compute_stats(db, filters)
 
 
+@router.get("/stats/breakdown", response_model=list[BreakdownRow])
+def stats_breakdown(db: DbSession, filters: Filters, by: Literal["queue", "brand"] = "queue"):
+    """Report rows per queue (inbound calls only) or per brand. Accepts the same filters as GET /api/calls."""
+    return call_service.compute_breakdown(db, filters, by)
+
+
 @router.get("/calls", response_model=list[CallOut])
 def list_calls(db: DbSession, filters: Filters):
-    """Newest first. Filters: direction, status, outcome, brand_id, search, date_from, date_to."""
+    """Newest first. Filters: direction, status, outcome, brand_id, queue_id, search, date_from, date_to."""
     return call_service.list_calls(db, filters)
 
 

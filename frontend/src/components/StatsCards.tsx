@@ -51,6 +51,11 @@ export function StatsCards({ stats, loading }: { stats: Stats | null; loading: b
             {item.label === "Total Calls" && !!s?.in_progress && (
               <p className="mt-0.5 text-[11px] text-blue-600">{s.in_progress} in progress</p>
             )}
+            {item.label === "Inbound Calls" && !!s?.average_wait_seconds && (
+              <p className="mt-0.5 text-[11px] text-slate-500" title="Average wait of answered inbound calls">
+                avg wait {formatDuration(s.average_wait_seconds)}
+              </p>
+            )}
           </div>
         );
       })}

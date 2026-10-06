@@ -124,3 +124,15 @@ export function normalizeDialNumber(input: string, config: Pick<SipConfig, "dial
 
 /** Headers FreePBX/Asterisk commonly use to tell an extension which DID was called. */
 export const CALLED_NUMBER_HEADERS = ["X-Called-Number", "X-DID", "P-Called-Party-ID", "Diversion", "To"];
+
+/**
+ * Routing labels set in the FreePBX dialplan before the call reaches the queue, e.g.
+ *   Set(HASH(__SIPHEADERS,X-Queue)=CD-Booking)   (see README > Brands, queues and IVR)
+ */
+export const ROUTING_HEADERS = {
+  brand: "X-Brand",
+  queue: "X-Queue",
+  ivrPath: "X-IVR-Path",
+  /** Unix time the caller entered the queue (Asterisk ${EPOCH}). */
+  queueStart: "X-Queue-Start",
+} as const;
