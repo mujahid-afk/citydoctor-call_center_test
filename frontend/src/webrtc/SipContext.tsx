@@ -35,6 +35,8 @@ interface SipContextValue {
   lastEndedCall: SipCall | null;
   actionError: string | null;
   supportsHold: boolean;
+  /** False until the agent clicks the page: browsers keep a page silent until then (no ringtone). */
+  soundOn: boolean;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   dial(number: string, meta?: OutboundMeta): Promise<void>;
@@ -66,6 +68,7 @@ export function SipProvider({
   const [call, setCall] = useState<SipCall | null>(null);
   const [lastEndedCall, setLastEndedCall] = useState<SipCall | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [soundOn, setSoundOn] = useState(false);
 
   const clientRef = useRef<SipClient | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -170,15 +173,29 @@ export function SipProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incomingId]);
 
-  // Browsers only allow audio and permission prompts after a user gesture:
-  // unlock tones and ask for notification permission on the first click.
+  // Browsers only allow audio and permission prompts after a user gesture: unlock
+  // tones on clicks / key presses until it works, and ask for notification permission once.
   useEffect(() => {
-    const onFirstGesture = () => {
-      unlockTones();
-      if ("Notification" in window && Notification.permission === "default") void Notification.requestPermission();
+    let askedNotifications = false;
+    const onGesture = () => {
+      void unlockTones().then((on) => {
+        setSoundOn(on);
+        if (on) {
+          document.removeEventListener("pointerdown", onGesture);
+          document.removeEventListener("keydown", onGesture);
+        }
+      });
+      if (!askedNotifications && "Notification" in window && Notification.permission === "default") {
+        askedNotifications = true;
+        void Notification.requestPermission();
+      }
     };
-    document.addEventListener("pointerdown", onFirstGesture, { once: true });
-    return () => document.removeEventListener("pointerdown", onFirstGesture);
+    document.addEventListener("pointerdown", onGesture);
+    document.addEventListener("keydown", onGesture);
+    return () => {
+      document.removeEventListener("pointerdown", onGesture);
+      document.removeEventListener("keydown", onGesture);
+    };
   }, []);
 
   const run = useCallback(async (action: (client: SipClient) => Promise<void> | void) => {
@@ -205,6 +222,7 @@ export function SipProvider({
       lastEndedCall,
       actionError,
       supportsHold: clientRef.current?.supportsHold ?? false,
+      soundOn,
       connect: () => run((c) => c.connect()),
       disconnect: () => run((c) => c.disconnect()),
       dial: (number, meta) =>
@@ -237,7 +255,7 @@ export function SipProvider({
       clearActionError: () => setActionError(null),
       normalize,
     }),
-    [config, registration, registrationError, call, lastEndedCall, actionError, run, normalize],
+    [config, registration, registrationError, call, lastEndedCall, actionError, soundOn, run, normalize],
   );
 
   return (

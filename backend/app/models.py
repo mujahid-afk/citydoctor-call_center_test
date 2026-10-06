@@ -118,6 +118,8 @@ class Call(Base):
     wait_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sip_call_id: Mapped[str | None] = mapped_column(String(200), index=True, nullable=True)
     sip_extension: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    # Inbound: the INVITE as received from FreePBX (JSON of its headers, auth removed), for checking routing headers.
+    sip_headers: Mapped[str | None] = mapped_column(Text, nullable=True)
     elevenlabs_conversation_id: Mapped[str | None] = mapped_column(String(120), index=True, nullable=True)
     status: Mapped[str] = mapped_column(String(20), index=True)
     outcome: Mapped[str | None] = mapped_column(String(20), index=True, nullable=True)

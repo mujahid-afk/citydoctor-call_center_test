@@ -45,6 +45,8 @@ export interface SipCall {
   earlyMedia?: boolean;
   /** SIP Call-ID header. */
   sipCallId?: string;
+  /** Inbound: JSON of the INVITE as received (headers, auth removed). */
+  sipHeaders?: string;
   state: CallState;
   muted: boolean;
   held: boolean;

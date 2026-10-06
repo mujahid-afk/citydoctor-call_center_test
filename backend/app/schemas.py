@@ -164,6 +164,7 @@ class CallOut(ORMModel):
     wait_seconds: int | None
     sip_call_id: str | None
     sip_extension: str | None
+    sip_headers: str | None = None
     elevenlabs_conversation_id: str | None
     status: Status
     outcome: Outcome | None
@@ -198,6 +199,7 @@ class CallCreate(BaseModel):
     queue_entered_at: datetime | None = None
     sip_call_id: str | None = None
     sip_extension: str | None = None
+    sip_headers: str | None = None
     purpose: str | None = None
     notes: str | None = None
     started_at: datetime | None = None

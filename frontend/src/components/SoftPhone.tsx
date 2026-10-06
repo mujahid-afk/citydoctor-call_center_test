@@ -96,6 +96,19 @@ export function SoftPhone({
             <p className="mt-1 break-words">{sip.registrationError}</p>
           </div>
         )}
+        {registered && !sip.soundOn && (
+          // Any click on the page turns sound on (see SipContext); this button just asks for one.
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-left text-xs text-amber-800 hover:bg-amber-100"
+          >
+            <Volume2 className="h-4 w-4 shrink-0" />
+            <span>
+              <span className="font-medium">Sound is off - click to turn on the ringtone.</span> The browser keeps the page
+              silent until you click it.
+            </span>
+          </button>
+        )}
         {(registration === "failed" || registration === "disconnected" || registration === "unregistered") && (
           <button type="button" className={`${btnSecondary} w-full`} onClick={() => void sip.connect()}>
             <RefreshCw className="h-4 w-4" /> Reconnect

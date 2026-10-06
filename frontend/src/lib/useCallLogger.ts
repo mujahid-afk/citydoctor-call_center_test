@@ -53,6 +53,7 @@ export function useCallLogger({
           ivr_path: call.ivrPath ?? null,
           queue_entered_at: iso(call.queueEnteredAt),
           sip_call_id: call.sipCallId ?? null,
+          sip_headers: call.sipHeaders ?? null,
           sip_extension: extension || null,
           purpose: meta?.purpose ?? null,
           started_at: iso(call.startedAt),

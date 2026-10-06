@@ -63,6 +63,7 @@ export interface Call {
   wait_seconds: number | null;
   sip_call_id: string | null;
   sip_extension: string | null;
+  sip_headers: string | null;
   elevenlabs_conversation_id: string | null;
   status: CallStatus;
   outcome: CallOutcome | null;
@@ -160,6 +161,7 @@ export interface CallCreate {
   queue_entered_at?: string;
   sip_call_id?: string | null;
   sip_extension?: string | null;
+  sip_headers?: string | null;
   purpose?: string | null;
   notes?: string | null;
   started_at?: string;

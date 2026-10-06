@@ -537,12 +537,13 @@ export class RealSipClient extends BaseSipClient {
       if (/^(authorization|proxy-authorization)$/i.test(name)) continue;
       headers[name] = values.map((v) => v.raw).join(", ");
     }
-    console.info("[softphone] incoming call data", {
+    const inviteData = {
       from: remoteNumber,
       fromName: invitation.remoteIdentity.displayName,
       requestUri: request.ruri?.toString(),
       headers,
-    });
+    };
+    console.info("[softphone] incoming call data", inviteData);
     let calledNumber: string | undefined;
     for (const header of CALLED_NUMBER_HEADERS) {
       const value = userFromHeader(request.getHeader(header));
@@ -568,6 +569,7 @@ export class RealSipClient extends BaseSipClient {
       calledNumber,
       ...routing,
       sipCallId: request.callId,
+      sipHeaders: JSON.stringify(inviteData),
       state: "incoming",
     });
 

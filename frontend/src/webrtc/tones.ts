@@ -35,7 +35,8 @@ const PATTERNS: Record<ToneKind, { cycle: number; gain: number; bursts: Burst[] 
 };
 
 let ctx: AudioContext | null = null;
-let active: { kind: ToneKind; timer: number; nodes: AudioNode[] } | null = null;
+let active: { kind: ToneKind; source: AudioBufferSourceNode } | null = null;
+const buffers: Partial<Record<ToneKind, AudioBuffer>> = {};
 
 function audioContext(): AudioContext | null {
   if (typeof window === "undefined" || !("AudioContext" in window)) return null;
@@ -45,27 +46,26 @@ function audioContext(): AudioContext | null {
   return ctx;
 }
 
-function scheduleCycle(ac: AudioContext, kind: ToneKind, start: number, nodes: AudioNode[]): void {
-  const pattern = PATTERNS[kind];
-  for (const burst of pattern.bursts) {
-    const t0 = start + burst.at;
-    const t1 = t0 + burst.duration;
-    const gain = ac.createGain();
-    gain.gain.setValueAtTime(0, t0);
-    gain.gain.linearRampToValueAtTime(pattern.gain, t0 + 0.01);
-    gain.gain.setValueAtTime(pattern.gain, t1 - 0.01);
-    gain.gain.linearRampToValueAtTime(0, t1);
-    gain.connect(ac.destination);
-    nodes.push(gain);
-    for (const freq of burst.freqs) {
-      const osc = ac.createOscillator();
-      osc.frequency.value = freq;
-      osc.connect(gain);
-      osc.start(t0);
-      osc.stop(t1);
-      nodes.push(osc);
+/**
+ * One cycle of the tone, rendered once. It is played as a looping buffer so no timer is
+ * involved: background tabs throttle timers (to once a minute), which cut timer-driven tones off.
+ */
+function renderCycle(ac: AudioContext, kind: ToneKind): AudioBuffer {
+  const { cycle, gain, bursts } = PATTERNS[kind];
+  const rate = ac.sampleRate;
+  const buffer = ac.createBuffer(1, Math.round(cycle * rate), rate);
+  const data = buffer.getChannelData(0);
+  const ramp = 0.01 * rate; // 10 ms fade in/out, no clicks
+  for (const burst of bursts) {
+    const start = Math.round(burst.at * rate);
+    const length = Math.round(burst.duration * rate);
+    for (let i = 0; i < length; i++) {
+      let sample = 0;
+      for (const freq of burst.freqs) sample += Math.sin((2 * Math.PI * freq * i) / rate);
+      data[start + i] += gain * Math.min(1, i / ramp, (length - i) / ramp) * sample;
     }
   }
+  return buffer;
 }
 
 export function startTone(kind: ToneKind): void {
@@ -73,37 +73,33 @@ export function startTone(kind: ToneKind): void {
   stopTone();
   const ac = audioContext();
   if (!ac) return;
-  const nodes: AudioNode[] = [];
-  const cycle = PATTERNS[kind].cycle;
-  let next = ac.currentTime + 0.05;
-  const tick = () => {
-    // Keep one cycle scheduled ahead.
-    while (next < ac.currentTime + cycle) {
-      scheduleCycle(ac, kind, next, nodes);
-      next += cycle;
-    }
-    // Drop references to nodes that have finished.
-    if (nodes.length > 200) nodes.splice(0, nodes.length - 100);
-  };
-  tick();
+  const source = ac.createBufferSource();
+  source.buffer = buffers[kind] ??= renderCycle(ac, kind);
+  source.loop = true;
+  source.connect(ac.destination);
+  source.start(ac.currentTime + 0.05);
   console.info(`[softphone] ${kind} tone on (audio ${ac.state})`);
-  active = { kind, timer: window.setInterval(tick, 500), nodes };
+  active = { kind, source };
 }
 
 export function stopTone(): void {
   if (!active) return;
-  window.clearInterval(active.timer);
-  for (const node of active.nodes) {
-    try {
-      node.disconnect();
-    } catch {
-      // already disconnected
-    }
+  try {
+    active.source.stop();
+  } catch {
+    // not started yet
   }
+  active.source.disconnect();
   active = null;
 }
 
-/** Call from a user gesture (e.g. the Call button) so later tones are allowed to play. */
-export function unlockTones(): void {
-  audioContext();
+/**
+ * Call from a user gesture (click / key press): browsers mute a page until the user has
+ * interacted with it. Resolves to true once tones can be heard.
+ */
+export async function unlockTones(): Promise<boolean> {
+  const ac = audioContext();
+  if (!ac) return false;
+  if (ac.state === "suspended") await ac.resume().catch(() => undefined);
+  return ac.state === "running";
 }
