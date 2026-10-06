@@ -317,6 +317,17 @@ function labelFromHeader(value: string | undefined): string | undefined {
   return text && text.toLowerCase() !== "unset" ? text.slice(0, 200) : undefined;
 }
 
+/**
+ * FreePBX Inbound Routes can prefix the caller name per DID ("CID name prefix"), e.g.
+ * "City Doctor:0543187047". Split that into the brand label and the real caller name.
+ */
+export function splitNamePrefix(displayName: string | undefined): { brand?: string; name?: string } {
+  const text = (displayName ?? "").trim().replace(/^"(.*)"$/, "$1").trim();
+  const match = text.match(/^([^:]*[A-Za-z][^:]*):\s*(.*)$/);
+  if (!match) return { name: text || undefined };
+  return { brand: match[1].trim(), name: match[2].trim() || undefined };
+}
+
 /** X-Queue-Start: Unix time in seconds (or ms). Ignored when implausible (bad value or clocks far apart). */
 export function parseQueueStart(value: string | undefined, now = Date.now()): number | undefined {
   const n = Number((value ?? "").trim());
@@ -544,6 +555,7 @@ export class RealSipClient extends BaseSipClient {
       headers,
     };
     console.info("[softphone] incoming call data", inviteData);
+    const callerName = splitNamePrefix(invitation.remoteIdentity.displayName);
     let calledNumber: string | undefined;
     for (const header of CALLED_NUMBER_HEADERS) {
       const value = userFromHeader(request.getHeader(header));
@@ -555,7 +567,8 @@ export class RealSipClient extends BaseSipClient {
       }
     }
     const routing = {
-      brandLabel: labelFromHeader(request.getHeader(ROUTING_HEADERS.brand)),
+      // X-Brand, else the Inbound Route's "CID name prefix" (e.g. "City Doctor:0543187047").
+      brandLabel: labelFromHeader(request.getHeader(ROUTING_HEADERS.brand)) ?? callerName.brand,
       queueName: labelFromHeader(request.getHeader(ROUTING_HEADERS.queue)),
       ivrPath: labelFromHeader(request.getHeader(ROUTING_HEADERS.ivrPath)),
       queueEnteredAt: parseQueueStart(request.getHeader(ROUTING_HEADERS.queueStart)),
@@ -565,7 +578,7 @@ export class RealSipClient extends BaseSipClient {
     const call = this.newCall({
       direction: "inbound",
       remoteNumber,
-      remoteDisplayName: invitation.remoteIdentity.displayName || undefined,
+      remoteDisplayName: callerName.name,
       calledNumber,
       ...routing,
       sipCallId: request.callId,
