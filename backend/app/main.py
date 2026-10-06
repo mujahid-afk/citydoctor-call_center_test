@@ -15,7 +15,7 @@ from sqlalchemy import text
 
 from .config import get_settings
 from .database import SessionLocal, init_db
-from .routers import bookings, brands, calls, customers, queues, testing
+from .routers import bookings, brands, calls, client_logs, customers, queues, testing
 from .seed import seed
 
 settings = get_settings()
@@ -49,7 +49,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for module in (calls, customers, bookings, brands, queues, testing):
+for module in (calls, customers, bookings, brands, queues, testing, client_logs):
     app.include_router(module.router)
 
 
