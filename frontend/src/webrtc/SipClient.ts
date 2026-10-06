@@ -504,6 +504,18 @@ export class RealSipClient extends BaseSipClient {
   private handleInvite(invitation: Invitation): void {
     const request = invitation.request;
     const remoteNumber = invitation.remoteIdentity.uri.user || "unknown";
+    // Show what the PBX sent with this call (useful to check brand/DID/queue headers).
+    const headers: Record<string, string> = {};
+    for (const [name, values] of Object.entries(request.headers)) {
+      if (/^(authorization|proxy-authorization)$/i.test(name)) continue;
+      headers[name] = values.map((v) => v.raw).join(", ");
+    }
+    console.info("[softphone] incoming call data", {
+      from: remoteNumber,
+      fromName: invitation.remoteIdentity.displayName,
+      requestUri: request.ruri?.toString(),
+      headers,
+    });
     let calledNumber: string | undefined;
     for (const header of CALLED_NUMBER_HEADERS) {
       const value = userFromHeader(request.getHeader(header));
